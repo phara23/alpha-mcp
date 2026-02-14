@@ -1,0 +1,45 @@
+{
+  "name": "@alpha-arcade/mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Alpha Arcade prediction markets on Algorand",
+  "type": "module",
+  "bin": {
+    "alpha-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "algorand",
+    "prediction-markets",
+    "alpha-arcade",
+    "trading",
+    "ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/phara23/alpha-mcp.git"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@algorandfoundation/algokit-utils": "^6.0.2",
+    "@alpha-arcade/sdk": "^0.2.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "algosdk": "^2.7.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.7.0"
+  }
+}
