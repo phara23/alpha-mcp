@@ -69,9 +69,11 @@ To enable trading, add your mnemonic:
 }
 ```
 
-### Claude Desktop
+### Claude Desktop / Claude Code
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+Same config works for both **Claude Desktop** (GUI app) and **Claude Code** (terminal CLI).
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS (or `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
 
 ```json
 {
@@ -85,6 +87,12 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
     }
   }
 }
+```
+
+For **Claude Code** specifically, you can also add it via the CLI:
+
+```bash
+claude mcp add alpha-arcade -- npx -y @alpha-arcade/mcp
 ```
 
 ### VS Code / Copilot
