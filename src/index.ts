@@ -134,14 +134,25 @@ server.tool(
         id: m.id,
         title: m.title,
         marketAppId: m.marketAppId,
+        yesAssetId: m.yesAssetId || undefined,
+        noAssetId: m.noAssetId || undefined,
         endsAt: new Date(m.endTs * 1000).toISOString(),
         isResolved: m.isResolved ?? false,
+        source: m.source ?? 'unknown',
       };
-      if (m.yesProb != null) entry.yesPrice = formatPrice(m.yesProb);
-      if (m.noProb != null) entry.noPrice = formatPrice(m.noProb);
-      if (m.volume != null) entry.volume = formatPrice(m.volume);
+      // API returns yesProb as a percentage (e.g. 40 = 40% = $0.40), volume as dollars.
+      // On-chain markets don't have these fields.
+      if (m.yesProb != null) entry.yesPrice = `$${(m.yesProb / 100).toFixed(2)}`;
+      if (m.noProb != null) entry.noPrice = `$${(m.noProb / 100).toFixed(2)}`;
+      if (m.volume != null) entry.volume = `$${m.volume.toFixed(2)}`;
       if (m.categories?.length) entry.categories = m.categories;
-      if (m.options?.length) entry.options = m.options.map((o) => ({ title: o.title, marketAppId: o.marketAppId }));
+      if (m.feeBase != null) entry.feeBase = m.feeBase;
+      if (m.options?.length) entry.options = m.options.map((o) => ({
+        title: o.title,
+        marketAppId: o.marketAppId,
+        yesAssetId: o.yesAssetId,
+        noAssetId: o.noAssetId,
+      }));
       return entry;
     });
     return textResult(JSON.stringify(summary, null, 2));
@@ -171,7 +182,7 @@ server.tool(
     const formatSide = (entries: Array<{ price: number; quantity: number; escrowAppId: number; owner: string }>) =>
       entries.map((e) => ({
         price: formatPrice(e.price),
-        quantity: formatQty(e.quantity),
+        remainingQuantity: formatQty(e.quantity),
         escrowAppId: e.escrowAppId,
         owner: e.owner,
       }));
@@ -226,8 +237,11 @@ server.tool(
     const positions = await client.getPositions(address);
     const formatted = positions.map((p) => ({
       marketAppId: p.marketAppId,
+      title: p.title || `Market ${p.marketAppId}`,
       yesBalance: formatQty(p.yesBalance),
       noBalance: formatQty(p.noBalance),
+      yesAssetId: p.yesAssetId,
+      noAssetId: p.noAssetId,
     }));
     return textResult(
       formatted.length > 0
@@ -262,6 +276,7 @@ server.tool(
     });
     return textResult(
       `Limit order created.\n` +
+      `  Market App ID: ${marketAppId}\n` +
       `  Escrow App ID: ${result.escrowAppId}\n` +
       `  Position: ${position === 1 ? 'YES' : 'NO'}\n` +
       `  Side: ${isBuying ? 'BUY' : 'SELL'}\n` +
@@ -296,10 +311,12 @@ server.tool(
     });
     return textResult(
       `Market order created and matched.\n` +
+      `  Market App ID: ${marketAppId}\n` +
       `  Escrow App ID: ${result.escrowAppId}\n` +
       `  Position: ${position === 1 ? 'YES' : 'NO'}\n` +
       `  Side: ${isBuying ? 'BUY' : 'SELL'}\n` +
-      `  Price: ${formatPrice(price)}\n` +
+      `  Submitted Price: ${formatPrice(price)}\n` +
+      `  Fill Price: ${formatPrice(result.matchedPrice)}\n` +
       `  Quantity: ${formatQty(quantity)}\n` +
       `  Matched: ${formatQty(result.matchedQuantity)}\n` +
       `  Tx IDs: ${result.txIds.join(', ')}\n` +
@@ -321,7 +338,7 @@ server.tool(
     const result = await client.cancelOrder({ marketAppId, escrowAppId, orderOwner });
     return textResult(
       result.success
-        ? `Order cancelled successfully.\n  Escrow App ID: ${escrowAppId}\n  Tx IDs: ${result.txIds.join(', ')}`
+        ? `Order cancelled successfully.\n  Market App ID: ${marketAppId}\n  Escrow App ID: ${escrowAppId}\n  Tx IDs: ${result.txIds.join(', ')}\n  Confirmed round: ${result.confirmedRound}`
         : `Failed to cancel order ${escrowAppId}.`,
     );
   },
@@ -346,7 +363,7 @@ server.tool(
     });
     return textResult(
       result.success
-        ? `Match proposed successfully.\n  Maker escrow: ${makerEscrowAppId}\n  Quantity: ${formatQty(quantityMatched)}\n  Tx IDs: ${result.txIds.join(', ')}`
+        ? `Match proposed successfully.\n  Market App ID: ${marketAppId}\n  Maker Escrow: ${makerEscrowAppId}\n  Quantity: ${formatQty(quantityMatched)}\n  Tx IDs: ${result.txIds.join(', ')}\n  Confirmed round: ${result.confirmedRound}`
         : `Failed to propose match with escrow ${makerEscrowAppId}.`,
     );
   },
@@ -364,6 +381,8 @@ server.tool(
     const result = await client.splitShares({ marketAppId, amount });
     return textResult(
       `Split ${formatPrice(amount)} USDC into YES + NO tokens.\n` +
+      `  Market App ID: ${marketAppId}\n` +
+      `  Amount: ${formatQty(amount)} each of YES and NO\n` +
       `  Tx IDs: ${result.txIds.join(', ')}\n` +
       `  Confirmed round: ${result.confirmedRound}`,
     );
@@ -382,6 +401,8 @@ server.tool(
     const result = await client.mergeShares({ marketAppId, amount });
     return textResult(
       `Merged YES + NO tokens back into ${formatPrice(amount)} USDC.\n` +
+      `  Market App ID: ${marketAppId}\n` +
+      `  Amount: ${formatQty(amount)} each of YES and NO\n` +
       `  Tx IDs: ${result.txIds.join(', ')}\n` +
       `  Confirmed round: ${result.confirmedRound}`,
     );
@@ -401,6 +422,9 @@ server.tool(
     const result = await client.claim({ marketAppId, assetId, amount });
     return textResult(
       `Claim successful.\n` +
+      `  Market App ID: ${marketAppId}\n` +
+      `  Asset ID: ${assetId}\n` +
+      `  Amount claimed: ${formatQty(result.amountClaimed)}\n` +
       `  Tx IDs: ${result.txIds.join(', ')}\n` +
       `  Confirmed round: ${result.confirmedRound}`,
     );
