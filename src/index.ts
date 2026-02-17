@@ -111,6 +111,97 @@ const textResult = (text: string) => ({
 });
 
 // ============================================
+// Agent Guide
+// ============================================
+
+const AGENT_GUIDE = `# Alpha Arcade — Agent Guide
+
+## Units
+
+All prices and quantities in tool **inputs** use **microunits**: 1,000,000 = $1.00 or 1 share.
+
+| Human value | Microunit value |
+|---|---|
+| $0.50 | 500,000 |
+| $0.05 slippage | 50,000 |
+| 1 share | 1,000,000 |
+| 30 shares | 30,000,000 |
+
+Tool **outputs** from read tools (get_orderbook, get_open_orders, get_positions) return pre-formatted strings like "$0.50" and "2.50 shares". Write tools accept raw microunit integers.
+
+## Market Data Model
+
+### Binary markets
+A standard yes/no market has a single \`marketAppId\`, \`yesAssetId\`, and \`noAssetId\`. Use \`marketAppId\` for all trading calls.
+
+### Multi-choice markets
+Multi-choice markets (e.g., "Who wins the election?") appear with an \`options[]\` array. Each option is its own binary market with its own \`marketAppId\`:
+
+\`\`\`json
+{
+  "title": "Presidential Election Winner 2028",
+  "options": [
+    { "title": "Candidate A", "marketAppId": 100001, "yesAssetId": 111, "noAssetId": 112 },
+    { "title": "Candidate B", "marketAppId": 100002, "yesAssetId": 113, "noAssetId": 114 }
+  ]
+}
+\`\`\`
+
+**Always trade using the option's \`marketAppId\`, not the parent.**
+
+## Orderbook Mechanics
+
+### Four-sided book
+The orderbook has four sides: YES bids, YES asks, NO bids, NO asks.
+
+### Cross-side equivalence
+Because YES + NO always = $1.00:
+- A **YES bid at $0.30** is economically equivalent to a **NO ask at $0.70**
+- A **NO bid at $0.71** is economically equivalent to a **YES ask at $0.29**
+
+When looking for the best price to buy YES, check both YES asks AND NO bids (complement). The SDK's \`create_market_order\` handles this automatically, but it's important when reading the orderbook.
+
+### Limit vs market orders
+- **Limit order** (\`create_limit_order\`): Sits on the orderbook at your exact price. No matching happens.
+- **Market order** (\`create_market_order\`): Auto-matches against existing orders within your slippage tolerance. Returns the actual fill price.
+
+## Collateral
+
+Every order locks ~0.957 ALGO as minimum balance requirement (MBR) for the on-chain escrow app. This is refunded when the order is cancelled or filled.
+
+Buy orders also lock USDC collateral = quantity × (price + slippage) + fees.
+Sell orders lock outcome tokens as collateral.
+
+## Key Workflows
+
+### Buying shares
+1. \`get_markets\` — find a market
+2. \`get_orderbook\` — check available liquidity
+3. \`create_market_order\` (auto-matches) or \`create_limit_order\` (rests on book)
+4. Save the returned \`escrowAppId\` — you need it to cancel
+
+### Checking your portfolio
+1. \`get_positions\` — see all YES/NO token balances with market titles and asset IDs
+2. For open orders on a specific market: \`get_open_orders\` with the \`marketAppId\`
+
+### Cancelling an order
+1. \`get_open_orders\` — find the \`escrowAppId\` and \`owner\` address
+2. \`cancel_order\` with \`marketAppId\`, \`escrowAppId\`, and \`orderOwner\`
+
+### Claiming from a resolved market
+1. \`get_positions\` — find markets with token balances; note the \`yesAssetId\` or \`noAssetId\`
+2. \`claim\` with \`marketAppId\` and the winning token's \`assetId\`
+
+## Common Pitfalls
+
+- **Multi-choice markets**: The parent has no \`marketAppId\` for trading. Use \`options[].marketAppId\`.
+- **Prices are microunits in inputs**: $0.50 = 500,000, not 0.5 or 50.
+- **Orderbook cross-side**: If you only check YES asks, you miss cheaper liquidity from NO bids.
+- **Save escrowAppId**: It's the only way to cancel or reference your order later.
+- **Wallet required for trading**: Read-only tools work without \`ALPHA_MNEMONIC\`, but trading tools require it.
+`;
+
+// ============================================
 // MCP Server
 // ============================================
 
@@ -120,12 +211,29 @@ const server = new McpServer({
 });
 
 // ------------------------------------------
+// Resources
+// ------------------------------------------
+
+server.registerResource(
+  'agent-guide',
+  'alpha-arcade://agent-guide',
+  { description: 'Agent guide for Alpha Arcade prediction markets — data model, units, mechanics, workflows, and common pitfalls', mimeType: 'text/markdown' },
+  async () => ({
+    contents: [{
+      uri: 'alpha-arcade://agent-guide',
+      mimeType: 'text/markdown',
+      text: AGENT_GUIDE,
+    }],
+  }),
+);
+
+// ------------------------------------------
 // Read-only tools
 // ------------------------------------------
 
 server.tool(
   'get_markets',
-  'Fetch all live, tradeable prediction markets from Alpha Arcade. Returns market titles, prices, volume, and app IDs.',
+  'Fetch all live markets. Returns summary: id, title, marketAppId, prices, volume. Multi-choice markets have an options[] array — use options[].marketAppId for trading, not the parent. Prices (yesPrice/noPrice) are formatted as dollars. Read the agent-guide resource for full data model details.',
   async () => {
     const client = getReadOnlyClient();
     const markets = await client.getMarkets();
@@ -161,7 +269,7 @@ server.tool(
 
 server.tool(
   'get_market',
-  'Fetch a single market by its ID. Returns full market details including options for multi-choice markets.',
+  'Fetch full details for a single market by ID (app ID string for on-chain, UUID for API). Returns the complete market object including options for multi-choice markets.',
   { marketId: z.string().describe('The market ID (app ID string for on-chain, UUID for API)') },
   async ({ marketId }) => {
     const client = getReadOnlyClient();
@@ -173,7 +281,7 @@ server.tool(
 
 server.tool(
   'get_orderbook',
-  'Fetch the full on-chain orderbook for a market. Shows all YES and NO bids and asks with prices, quantities, and escrow app IDs.',
+  'Fetch the on-chain orderbook (4 sides: YES bids/asks, NO bids/asks). Remember: a YES bid at $X is equivalent to a NO ask at $(1-X), and vice versa. Check both sides when looking for best effective price.',
   { marketAppId: z.number().describe('The market app ID (number)') },
   async ({ marketAppId }) => {
     const client = getReadOnlyClient();
@@ -257,7 +365,7 @@ server.tool(
 
 server.tool(
   'create_limit_order',
-  'Place a limit order on a prediction market. Price is in microunits (500000 = $0.50). Quantity is in microunits (1000000 = 1 share).',
+  'Place a limit order on a prediction market. Price and quantity in microunits (500000 = $0.50, 1000000 = 1 share). Locks ~0.957 ALGO collateral (refunded on cancel/fill). Returns escrowAppId — save it for cancel_order.',
   {
     marketAppId: z.number().describe('The market app ID'),
     position: z.union([z.literal(0), z.literal(1)]).describe('1 = Yes, 0 = No'),
@@ -290,7 +398,7 @@ server.tool(
 
 server.tool(
   'create_market_order',
-  'Place a market order with auto-matching. Price in microunits (500000 = $0.50). Slippage in microunits (50000 = $0.05).',
+  'Place a market order with auto-matching against best available counterparty orders. Price, quantity, and slippage in microunits (500000 = $0.50, 1000000 = 1 share, 50000 = $0.05 slippage). Locks ~0.957 ALGO collateral. Returns escrowAppId, matched quantity, and actual fill price.',
   {
     marketAppId: z.number().describe('The market app ID'),
     position: z.union([z.literal(0), z.literal(1)]).describe('1 = Yes, 0 = No'),
@@ -327,7 +435,7 @@ server.tool(
 
 server.tool(
   'cancel_order',
-  'Cancel an open order by its escrow app ID. Returns escrowed funds to the order owner.',
+  'Cancel an open order. Requires escrowAppId (from create_limit_order or get_open_orders) and orderOwner (the Algorand address that created it). Refunds USDC/tokens and ~0.957 ALGO collateral.',
   {
     marketAppId: z.number().describe('The market app ID'),
     escrowAppId: z.number().describe('The escrow app ID of the order to cancel'),
@@ -346,7 +454,7 @@ server.tool(
 
 server.tool(
   'propose_match',
-  'Propose a match between an existing maker order and the configured wallet as taker.',
+  'Propose a match between an existing maker order and the configured wallet as taker. The maker escrowAppId and address can be found via get_orderbook. quantityMatched is in microunits.',
   {
     marketAppId: z.number().describe('The market app ID'),
     makerEscrowAppId: z.number().describe('The escrow app ID of the maker order'),
