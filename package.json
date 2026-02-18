@@ -1,6 +1,6 @@
 {
   "name": "@alpha-arcade/mcp",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "MCP server for Alpha Arcade prediction markets on Algorand",
   "type": "module",
   "bin": {

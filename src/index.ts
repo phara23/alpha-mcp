@@ -281,25 +281,51 @@ server.tool(
 
 server.tool(
   'get_orderbook',
-  'Fetch the on-chain orderbook (4 sides: YES bids/asks, NO bids/asks). Remember: a YES bid at $X is equivalent to a NO ask at $(1-X), and vice versa. Check both sides when looking for best effective price.',
+  'Fetch the on-chain orderbook as a unified YES-perspective view. Merges all 4 sides (YES bids/asks + NO bids/asks) into a single book: NO bids become YES asks at $(1-X), NO asks become YES bids at $(1-X). Asks sorted low-to-high, bids sorted high-to-low. Includes spread calculation.',
   { marketAppId: z.number().describe('The market app ID (number)') },
   async ({ marketAppId }) => {
     const client = getReadOnlyClient();
     const book = await client.getOrderbook(marketAppId);
 
-    const formatSide = (entries: Array<{ price: number; quantity: number; escrowAppId: number; owner: string }>) =>
-      entries.map((e) => ({
-        price: formatPrice(e.price),
-        remainingQuantity: formatQty(e.quantity),
+    type RawEntry = { price: number; quantity: number; escrowAppId: number; owner: string };
+    type UnifiedEntry = { price: string; priceRaw: number; shares: string; total: string; escrowAppId: number; owner: string; source: string };
+
+    const toUnified = (e: RawEntry, source: string, priceOverride?: number): UnifiedEntry => {
+      const p = priceOverride ?? e.price;
+      const priceCents = p / 1_000_000;
+      const shares = e.quantity / 1_000_000;
+      return {
+        price: `${(priceCents * 100).toFixed(2)}¢`,
+        priceRaw: p,
+        shares: `${shares.toFixed(2)}`,
+        total: `$${(priceCents * shares).toFixed(2)}`,
         escrowAppId: e.escrowAppId,
         owner: e.owner,
-      }));
+        source,
+      };
+    };
+
+    const asks: UnifiedEntry[] = [
+      ...book.yes.asks.map((e: RawEntry) => toUnified(e, 'YES ask')),
+      ...book.no.bids.map((e: RawEntry) => toUnified(e, 'NO bid (= YES ask)', 1_000_000 - e.price)),
+    ].sort((a, b) => a.priceRaw - b.priceRaw);
+
+    const bids: UnifiedEntry[] = [
+      ...book.yes.bids.map((e: RawEntry) => toUnified(e, 'YES bid')),
+      ...book.no.asks.map((e: RawEntry) => toUnified(e, 'NO ask (= YES bid)', 1_000_000 - e.price)),
+    ].sort((a, b) => b.priceRaw - a.priceRaw);
+
+    const bestAsk = asks.length > 0 ? asks[0].priceRaw : null;
+    const bestBid = bids.length > 0 ? bids[0].priceRaw : null;
+    const spread = bestAsk != null && bestBid != null
+      ? `${((bestAsk - bestBid) / 10_000).toFixed(2)}¢`
+      : 'N/A';
+
+    const totalOrders = book.yes.bids.length + book.yes.asks.length + book.no.bids.length + book.no.asks.length;
 
     const result = {
-      yes: { bids: formatSide(book.yes.bids), asks: formatSide(book.yes.asks) },
-      no: { bids: formatSide(book.no.bids), asks: formatSide(book.no.asks) },
-      totalOrders:
-        book.yes.bids.length + book.yes.asks.length + book.no.bids.length + book.no.asks.length,
+      unified: { asks, bids, spread },
+      totalOrders,
     };
     return textResult(JSON.stringify(result, null, 2));
   },
