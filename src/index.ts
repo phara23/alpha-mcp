@@ -175,7 +175,7 @@ Sell orders lock outcome tokens as collateral.
 ## Key Workflows
 
 ### Buying shares
-1. \`get_markets\` — find a market
+1. \`get_live_markets\` — find a market
 2. \`get_orderbook\` — check available liquidity
 3. \`create_market_order\` (auto-matches) or \`create_limit_order\` (rests on book)
 4. Save the returned \`escrowAppId\` — you need it to cancel
@@ -232,11 +232,11 @@ server.registerResource(
 // ------------------------------------------
 
 server.tool(
-  'get_markets',
+  'get_live_markets',
   'Fetch all live markets. Returns summary: id, title, marketAppId, prices, volume. Multi-choice markets have an options[] array — use options[].marketAppId for trading, not the parent. Prices (yesPrice/noPrice) are formatted as dollars. Read the agent-guide resource for full data model details.',
   async () => {
     const client = getReadOnlyClient();
-    const markets = await client.getMarkets();
+    const markets = await client.getLiveMarkets();
     const summary = markets.map((m) => {
       const entry: Record<string, unknown> = {
         id: m.id,

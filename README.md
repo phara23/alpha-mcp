@@ -8,7 +8,7 @@ Lets AI agents (Claude, Cursor, Copilot, etc.) browse markets, place orders, man
 
 | Tool | Description | Requires Wallet |
 |------|-------------|:---:|
-| `get_markets` | Fetch all live tradeable markets | No |
+| `get_live_markets` | Fetch all live tradeable markets | No |
 | `get_market` | Fetch a single market by ID | No |
 | `get_orderbook` | Get the full on-chain orderbook for a market | No |
 | `get_open_orders` | Get open orders for a wallet on a market | No |
