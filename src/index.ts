@@ -175,7 +175,7 @@ Sell orders lock outcome tokens as collateral.
 ## Key Workflows
 
 ### Buying shares
-1. \`get_live_markets\` — find a market
+1. \`get_live_markets\` — find a market (or \`get_reward_markets\` for markets with liquidity rewards)
 2. \`get_orderbook\` — check available liquidity
 3. \`create_market_order\` (auto-matches) or \`create_limit_order\` (rests on book)
 4. Save the returned \`escrowAppId\` — you need it to cancel
@@ -255,6 +255,49 @@ server.registerTool(
       if (m.volume != null) entry.volume = `$${m.volume.toFixed(2)}`;
       if (m.categories?.length) entry.categories = m.categories;
       if (m.feeBase != null) entry.feeBase = m.feeBase;
+      if (m.options?.length) entry.options = m.options.map((o) => ({
+        title: o.title,
+        marketAppId: o.marketAppId,
+        yesAssetId: o.yesAssetId,
+        noAssetId: o.noAssetId,
+      }));
+      return entry;
+    });
+    return textResult(JSON.stringify(summary, null, 2));
+  },
+);
+
+server.registerTool(
+  'get_reward_markets',
+  {
+    description: 'Fetch all reward markets from the Alpha REST API. Returns markets that have liquidity rewards (totalRewards, rewardsPaidOut, etc.). Requires ALPHA_API_KEY for API access. Same summary shape as get_live_markets: id, title, marketAppId, prices, volume; multi-choice markets have options[].',
+    inputSchema: {},
+  },
+  async () => {
+    const client = getReadOnlyClient();
+    const markets = await client.getRewardMarkets();
+    const summary = markets.map((m) => {
+      const entry: Record<string, unknown> = {
+        id: m.id,
+        title: m.title,
+        marketAppId: m.marketAppId,
+        yesAssetId: m.yesAssetId || undefined,
+        noAssetId: m.noAssetId || undefined,
+        endsAt: new Date(m.endTs * 1000).toISOString(),
+        isResolved: m.isResolved ?? false,
+        source: m.source ?? 'unknown',
+      };
+      if (m.yesProb != null) entry.yesPrice = `$${(m.yesProb / 100).toFixed(2)}`;
+      if (m.noProb != null) entry.noPrice = `$${(m.noProb / 100).toFixed(2)}`;
+      if (m.volume != null) entry.volume = `$${m.volume.toFixed(2)}`;
+      if (m.categories?.length) entry.categories = m.categories;
+      if (m.feeBase != null) entry.feeBase = m.feeBase;
+      if (m.totalRewards != null) entry.totalRewards = m.totalRewards;
+      if (m.rewardsPaidOut != null) entry.rewardsPaidOut = m.rewardsPaidOut;
+      if (m.rewardsSpreadDistance != null) entry.rewardsSpreadDistance = m.rewardsSpreadDistance;
+      if (m.rewardsMinContracts != null) entry.rewardsMinContracts = m.rewardsMinContracts;
+      if (m.lastRewardAmount != null) entry.lastRewardAmount = m.lastRewardAmount;
+      if (m.lastRewardTs != null) entry.lastRewardTs = new Date(m.lastRewardTs).toISOString();
       if (m.options?.length) entry.options = m.options.map((o) => ({
         title: o.title,
         marketAppId: o.marketAppId,
