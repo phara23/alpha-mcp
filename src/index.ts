@@ -18,7 +18,7 @@ const INDEXER_TOKEN = process.env.ALPHA_INDEXER_TOKEN || '';
 const INDEXER_PORT = process.env.ALPHA_INDEXER_PORT || '443';
 const MATCHER_APP_ID = Number(process.env.ALPHA_MATCHER_APP_ID || '3078581851');
 const USDC_ASSET_ID = Number(process.env.ALPHA_USDC_ASSET_ID || '31566704');
-const API_BASE_URL = process.env.ALPHA_API_BASE_URL || 'https://partners.alphaarcade.com/api';
+const API_BASE_URL = process.env.ALPHA_API_BASE_URL || 'https://platform.alphaarcade.com/api';
 
 // ============================================
 // Build the Alpha client
