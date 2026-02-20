@@ -34,6 +34,18 @@ Lets AI agents (Claude, Cursor, Copilot, etc.) browse markets, place orders, man
 | `ALPHA_MATCHER_APP_ID` | No | Matcher app ID (default: 3078581851) |
 | `ALPHA_USDC_ASSET_ID` | No | USDC ASA ID (default: 31566704) |
 
+### Getting an API key
+
+An API key is **optional**. Without it, you can still fetch markets on-chain, place orders, and use most SDK features. With an API key, you get richer market data, liquidity rewards information, and wallet order lookups, and more.
+
+To get an API key:
+
+1. Go to [alphaarcade.com](https://alphaarcade.com) and **sign up** with your email or Google account.
+2. Open the **Account** page 
+3. Open the **Partners** tab.
+4. Click **Create API key** and copy the key.
+5. Add it to your environment (e.g. a `.env` file in the project root):
+
 ### Cursor (read-only, zero config)
 
 Add to your `.cursor/mcp.json` (project-level) or `~/.cursor/mcp.json` (global):

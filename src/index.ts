@@ -18,7 +18,7 @@ const INDEXER_TOKEN = process.env.ALPHA_INDEXER_TOKEN || '';
 const INDEXER_PORT = process.env.ALPHA_INDEXER_PORT || '443';
 const MATCHER_APP_ID = Number(process.env.ALPHA_MATCHER_APP_ID || '3078581851');
 const USDC_ASSET_ID = Number(process.env.ALPHA_USDC_ASSET_ID || '31566704');
-const API_BASE_URL = process.env.ALPHA_API_BASE_URL || 'https://partners.alphaarcade.com/api';
+const API_BASE_URL = process.env.ALPHA_API_BASE_URL || 'https://platform.alphaarcade.com/api';
 
 // ============================================
 // Build the Alpha client
@@ -175,7 +175,7 @@ Sell orders lock outcome tokens as collateral.
 ## Key Workflows
 
 ### Buying shares
-1. \`get_live_markets\` — find a market
+1. \`get_live_markets\` — find a market (or \`get_reward_markets\` for markets with liquidity rewards)
 2. \`get_orderbook\` — check available liquidity
 3. \`create_market_order\` (auto-matches) or \`create_limit_order\` (rests on book)
 4. Save the returned \`escrowAppId\` — you need it to cancel
@@ -231,9 +231,9 @@ server.registerResource(
 // Read-only tools
 // ------------------------------------------
 
-server.tool(
+server.registerTool(
   'get_live_markets',
-  'Fetch all live markets. Returns summary: id, title, marketAppId, prices, volume. Multi-choice markets have an options[] array — use options[].marketAppId for trading, not the parent. Prices (yesPrice/noPrice) are formatted as dollars. Read the agent-guide resource for full data model details.',
+  { description: 'Fetch all live markets. Returns summary: id, title, marketAppId, prices, volume. Multi-choice markets have an options[] array — use options[].marketAppId for trading, not the parent. Prices (yesPrice/noPrice) are formatted as dollars. Read the agent-guide resource for full data model details.' },
   async () => {
     const client = getReadOnlyClient();
     const markets = await client.getLiveMarkets();
@@ -267,11 +267,56 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
+  'get_reward_markets',
+  {
+    description: 'Fetch all reward markets from the Alpha REST API. Returns markets that have liquidity rewards (totalRewards, rewardsPaidOut, etc.). Requires ALPHA_API_KEY for API access. Same summary shape as get_live_markets: id, title, marketAppId, prices, volume; multi-choice markets have options[].',
+    inputSchema: {},
+  },
+  async () => {
+    const client = getReadOnlyClient();
+    const markets = await client.getRewardMarkets();
+    const summary = markets.map((m) => {
+      const entry: Record<string, unknown> = {
+        id: m.id,
+        title: m.title,
+        marketAppId: m.marketAppId,
+        yesAssetId: m.yesAssetId || undefined,
+        noAssetId: m.noAssetId || undefined,
+        endsAt: new Date(m.endTs * 1000).toISOString(),
+        isResolved: m.isResolved ?? false,
+        source: m.source ?? 'unknown',
+      };
+      if (m.yesProb != null) entry.yesPrice = `$${(m.yesProb / 100).toFixed(2)}`;
+      if (m.noProb != null) entry.noPrice = `$${(m.noProb / 100).toFixed(2)}`;
+      if (m.volume != null) entry.volume = `$${m.volume.toFixed(2)}`;
+      if (m.categories?.length) entry.categories = m.categories;
+      if (m.feeBase != null) entry.feeBase = m.feeBase;
+      if (m.totalRewards != null) entry.totalRewards = m.totalRewards;
+      if (m.rewardsPaidOut != null) entry.rewardsPaidOut = m.rewardsPaidOut;
+      if (m.rewardsSpreadDistance != null) entry.rewardsSpreadDistance = m.rewardsSpreadDistance;
+      if (m.rewardsMinContracts != null) entry.rewardsMinContracts = m.rewardsMinContracts;
+      if (m.lastRewardAmount != null) entry.lastRewardAmount = m.lastRewardAmount;
+      if (m.lastRewardTs != null) entry.lastRewardTs = new Date(m.lastRewardTs).toISOString();
+      if (m.options?.length) entry.options = m.options.map((o) => ({
+        title: o.title,
+        marketAppId: o.marketAppId,
+        yesAssetId: o.yesAssetId,
+        noAssetId: o.noAssetId,
+      }));
+      return entry;
+    });
+    return textResult(JSON.stringify(summary, null, 2));
+  },
+);
+
+server.registerTool(
   'get_market',
-  'Fetch full details for a single market by ID (app ID string for on-chain, UUID for API). Returns the complete market object including options for multi-choice markets.',
-  { marketId: z.string().describe('The market ID (app ID string for on-chain, UUID for API)') },
-  async ({ marketId }) => {
+  {
+    description: 'Fetch full details for a single market by ID (app ID string for on-chain, UUID for API). Returns the complete market object including options for multi-choice markets.',
+    inputSchema: { marketId: z.string().describe('The market ID (app ID string for on-chain, UUID for API)') },
+  },
+  async ({ marketId }: { marketId: string }) => {
     const client = getReadOnlyClient();
     const market = await client.getMarket(marketId);
     if (!market) return textResult(`Market "${marketId}" not found.`);
@@ -279,11 +324,13 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'get_orderbook',
-  'Fetch the on-chain orderbook as a unified YES-perspective view. Merges all 4 sides (YES bids/asks + NO bids/asks) into a single book: NO bids become YES asks at $(1-X), NO asks become YES bids at $(1-X). Asks sorted low-to-high, bids sorted high-to-low. Includes spread calculation.',
-  { marketAppId: z.number().describe('The market app ID (number)') },
-  async ({ marketAppId }) => {
+  {
+    description: 'Fetch the on-chain orderbook as a unified YES-perspective view. Merges all 4 sides (YES bids/asks + NO bids/asks) into a single book: NO bids become YES asks at $(1-X), NO asks become YES bids at $(1-X). Asks sorted low-to-high, bids sorted high-to-low. Includes spread calculation.',
+    inputSchema: { marketAppId: z.number().describe('The market app ID (number)') },
+  },
+  async ({ marketAppId }: { marketAppId: number }) => {
     const client = getReadOnlyClient();
     const book = await client.getOrderbook(marketAppId);
 
@@ -331,14 +378,16 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'get_open_orders',
-  'Fetch all open orders for a wallet on a specific market. You must provide walletAddress or set ALPHA_MNEMONIC.',
   {
-    marketAppId: z.number().describe('The market app ID'),
-    walletAddress: z.string().optional().describe('Algorand wallet address (required if ALPHA_MNEMONIC is not set)'),
+    description: 'Fetch all open orders for a wallet on a specific market. You must provide walletAddress or set ALPHA_MNEMONIC.',
+    inputSchema: {
+      marketAppId: z.number().describe('The market app ID'),
+      walletAddress: z.string().optional().describe('Algorand wallet address (required if ALPHA_MNEMONIC is not set)'),
+    },
   },
-  async ({ marketAppId, walletAddress }) => {
+  async ({ marketAppId, walletAddress }: { marketAppId: number; walletAddress?: string }) => {
     const address = resolveWalletAddress(walletAddress);
     const client = getReadOnlyClient();
     const orders = await client.getOpenOrders(marketAppId, address);
@@ -359,13 +408,15 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'get_positions',
-  'Fetch all YES/NO token positions for a wallet across all markets. You must provide walletAddress or set ALPHA_MNEMONIC.',
   {
-    walletAddress: z.string().optional().describe('Algorand wallet address (required if ALPHA_MNEMONIC is not set)'),
+    description: 'Fetch all YES/NO token positions for a wallet across all markets. You must provide walletAddress or set ALPHA_MNEMONIC.',
+    inputSchema: {
+      walletAddress: z.string().optional().describe('Algorand wallet address (required if ALPHA_MNEMONIC is not set)'),
+    },
   },
-  async ({ walletAddress }) => {
+  async ({ walletAddress }: { walletAddress?: string }) => {
     const address = resolveWalletAddress(walletAddress);
     const client = getReadOnlyClient();
     const positions = await client.getPositions(address);
@@ -389,17 +440,19 @@ server.tool(
 // Write tools (require mnemonic)
 // ------------------------------------------
 
-server.tool(
+server.registerTool(
   'create_limit_order',
-  'Place a limit order on a prediction market. Price and quantity in microunits (500000 = $0.50, 1000000 = 1 share). Locks ~0.957 ALGO collateral (refunded on cancel/fill). Returns escrowAppId — save it for cancel_order.',
   {
-    marketAppId: z.number().describe('The market app ID'),
-    position: z.union([z.literal(0), z.literal(1)]).describe('1 = Yes, 0 = No'),
-    price: z.number().describe('Price in microunits (e.g. 500000 = $0.50)'),
-    quantity: z.number().describe('Quantity in microunits (e.g. 1000000 = 1 share)'),
-    isBuying: z.boolean().describe('true = buy order, false = sell order'),
+    description: 'Place a limit order on a prediction market. Price and quantity in microunits (500000 = $0.50, 1000000 = 1 share). Locks ~0.957 ALGO collateral (refunded on cancel/fill). Returns escrowAppId — save it for cancel_order.',
+    inputSchema: {
+      marketAppId: z.number().describe('The market app ID'),
+      position: z.union([z.literal(0), z.literal(1)]).describe('1 = Yes, 0 = No'),
+      price: z.number().describe('Price in microunits (e.g. 500000 = $0.50)'),
+      quantity: z.number().describe('Quantity in microunits (e.g. 1000000 = 1 share)'),
+      isBuying: z.boolean().describe('true = buy order, false = sell order'),
+    },
   },
-  async ({ marketAppId, position, price, quantity, isBuying }) => {
+  async ({ marketAppId, position, price, quantity, isBuying }: { marketAppId: number; position: 0 | 1; price: number; quantity: number; isBuying: boolean }) => {
     const client = requireTradingClient();
     const result = await client.createLimitOrder({
       marketAppId,
@@ -422,18 +475,20 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'create_market_order',
-  'Place a market order with auto-matching against best available counterparty orders. Price, quantity, and slippage in microunits (500000 = $0.50, 1000000 = 1 share, 50000 = $0.05 slippage). Locks ~0.957 ALGO collateral. Returns escrowAppId, matched quantity, and actual fill price.',
   {
-    marketAppId: z.number().describe('The market app ID'),
-    position: z.union([z.literal(0), z.literal(1)]).describe('1 = Yes, 0 = No'),
-    price: z.number().describe('Price in microunits (e.g. 500000 = $0.50)'),
-    quantity: z.number().describe('Quantity in microunits (e.g. 1000000 = 1 share)'),
-    isBuying: z.boolean().describe('true = buy order, false = sell order'),
-    slippage: z.number().describe('Slippage tolerance in microunits (e.g. 50000 = $0.05)'),
+    description: 'Place a market order with auto-matching against best available counterparty orders. Price, quantity, and slippage in microunits (500000 = $0.50, 1000000 = 1 share, 50000 = $0.05 slippage). Locks ~0.957 ALGO collateral. Returns escrowAppId, matched quantity, and actual fill price.',
+    inputSchema: {
+      marketAppId: z.number().describe('The market app ID'),
+      position: z.union([z.literal(0), z.literal(1)]).describe('1 = Yes, 0 = No'),
+      price: z.number().describe('Price in microunits (e.g. 500000 = $0.50)'),
+      quantity: z.number().describe('Quantity in microunits (e.g. 1000000 = 1 share)'),
+      isBuying: z.boolean().describe('true = buy order, false = sell order'),
+      slippage: z.number().describe('Slippage tolerance in microunits (e.g. 50000 = $0.05)'),
+    },
   },
-  async ({ marketAppId, position, price, quantity, isBuying, slippage }) => {
+  async ({ marketAppId, position, price, quantity, isBuying, slippage }: { marketAppId: number; position: 0 | 1; price: number; quantity: number; isBuying: boolean; slippage: number }) => {
     const client = requireTradingClient();
     const result = await client.createMarketOrder({
       marketAppId,
@@ -450,24 +505,26 @@ server.tool(
       `  Position: ${position === 1 ? 'YES' : 'NO'}\n` +
       `  Side: ${isBuying ? 'BUY' : 'SELL'}\n` +
       `  Submitted Price: ${formatPrice(price)}\n` +
-      `  Fill Price: ${formatPrice(result.matchedPrice)}\n` +
+      `  Fill Price: ${formatPrice(result.matchedPrice ?? 0)}\n` +
       `  Quantity: ${formatQty(quantity)}\n` +
-      `  Matched: ${formatQty(result.matchedQuantity)}\n` +
+      `  Matched: ${formatQty(result.matchedQuantity ?? 0)}\n` +
       `  Tx IDs: ${result.txIds.join(', ')}\n` +
       `  Confirmed round: ${result.confirmedRound}`,
     );
   },
 );
 
-server.tool(
+server.registerTool(
   'cancel_order',
-  'Cancel an open order. Requires escrowAppId (from create_limit_order or get_open_orders) and orderOwner (the Algorand address that created it). Refunds USDC/tokens and ~0.957 ALGO collateral.',
   {
-    marketAppId: z.number().describe('The market app ID'),
-    escrowAppId: z.number().describe('The escrow app ID of the order to cancel'),
-    orderOwner: z.string().describe('The Algorand address that owns the order'),
+    description: 'Cancel an open order. Requires escrowAppId (from create_limit_order or get_open_orders) and orderOwner (the Algorand address that created it). Refunds USDC/tokens and ~0.957 ALGO collateral.',
+    inputSchema: {
+      marketAppId: z.number().describe('The market app ID'),
+      escrowAppId: z.number().describe('The escrow app ID of the order to cancel'),
+      orderOwner: z.string().describe('The Algorand address that owns the order'),
+    },
   },
-  async ({ marketAppId, escrowAppId, orderOwner }) => {
+  async ({ marketAppId, escrowAppId, orderOwner }: { marketAppId: number; escrowAppId: number; orderOwner: string }) => {
     const client = requireTradingClient();
     const result = await client.cancelOrder({ marketAppId, escrowAppId, orderOwner });
     return textResult(
@@ -478,16 +535,18 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'propose_match',
-  'Propose a match between an existing maker order and the configured wallet as taker. The maker escrowAppId and address can be found via get_orderbook. quantityMatched is in microunits.',
   {
-    marketAppId: z.number().describe('The market app ID'),
-    makerEscrowAppId: z.number().describe('The escrow app ID of the maker order'),
-    makerAddress: z.string().describe('The Algorand address of the maker'),
-    quantityMatched: z.number().describe('Quantity to match in microunits'),
+    description: 'Propose a match between an existing maker order and the configured wallet as taker. The maker escrowAppId and address can be found via get_orderbook. quantityMatched is in microunits.',
+    inputSchema: {
+      marketAppId: z.number().describe('The market app ID'),
+      makerEscrowAppId: z.number().describe('The escrow app ID of the maker order'),
+      makerAddress: z.string().describe('The Algorand address of the maker'),
+      quantityMatched: z.number().describe('Quantity to match in microunits'),
+    },
   },
-  async ({ marketAppId, makerEscrowAppId, makerAddress, quantityMatched }) => {
+  async ({ marketAppId, makerEscrowAppId, makerAddress, quantityMatched }: { marketAppId: number; makerEscrowAppId: number; makerAddress: string; quantityMatched: number }) => {
     const client = requireTradingClient();
     const result = await client.proposeMatch({
       marketAppId,
@@ -503,14 +562,16 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'split_shares',
-  'Split USDC into equal YES and NO outcome tokens. 1 USDC (1000000 microunits) = 1 YES + 1 NO.',
   {
-    marketAppId: z.number().describe('The market app ID'),
-    amount: z.number().describe('Amount to split in microunits (e.g. 1000000 = $1.00 USDC)'),
+    description: 'Split USDC into equal YES and NO outcome tokens. 1 USDC (1000000 microunits) = 1 YES + 1 NO.',
+    inputSchema: {
+      marketAppId: z.number().describe('The market app ID'),
+      amount: z.number().describe('Amount to split in microunits (e.g. 1000000 = $1.00 USDC)'),
+    },
   },
-  async ({ marketAppId, amount }) => {
+  async ({ marketAppId, amount }: { marketAppId: number; amount: number }) => {
     const client = requireTradingClient();
     const result = await client.splitShares({ marketAppId, amount });
     return textResult(
@@ -523,14 +584,16 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'merge_shares',
-  'Merge equal YES and NO outcome tokens back into USDC. 1 YES + 1 NO = 1 USDC.',
   {
-    marketAppId: z.number().describe('The market app ID'),
-    amount: z.number().describe('Amount to merge in microunits'),
+    description: 'Merge equal YES and NO outcome tokens back into USDC. 1 YES + 1 NO = 1 USDC.',
+    inputSchema: {
+      marketAppId: z.number().describe('The market app ID'),
+      amount: z.number().describe('Amount to merge in microunits'),
+    },
   },
-  async ({ marketAppId, amount }) => {
+  async ({ marketAppId, amount }: { marketAppId: number; amount: number }) => {
     const client = requireTradingClient();
     const result = await client.mergeShares({ marketAppId, amount });
     return textResult(
@@ -543,15 +606,17 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   'claim',
-  'Claim USDC from a resolved market by redeeming outcome tokens. Winning = 1:1 USDC. Losing = burned.',
   {
-    marketAppId: z.number().describe('The market app ID'),
-    assetId: z.number().describe('The outcome token ASA ID to redeem'),
-    amount: z.number().optional().describe('Amount to claim in microunits (omit to claim entire balance)'),
+    description: 'Claim USDC from a resolved market by redeeming outcome tokens. Winning = 1:1 USDC. Losing = burned.',
+    inputSchema: {
+      marketAppId: z.number().describe('The market app ID'),
+      assetId: z.number().describe('The outcome token ASA ID to redeem'),
+      amount: z.number().optional().describe('Amount to claim in microunits (omit to claim entire balance)'),
+    },
   },
-  async ({ marketAppId, assetId, amount }) => {
+  async ({ marketAppId, assetId, amount }: { marketAppId: number; assetId: number; amount?: number }) => {
     const client = requireTradingClient();
     const result = await client.claim({ marketAppId, assetId, amount });
     return textResult(
