@@ -450,9 +450,9 @@ server.tool(
       `  Position: ${position === 1 ? 'YES' : 'NO'}\n` +
       `  Side: ${isBuying ? 'BUY' : 'SELL'}\n` +
       `  Submitted Price: ${formatPrice(price)}\n` +
-      `  Fill Price: ${formatPrice(result.matchedPrice)}\n` +
+      `  Fill Price: ${formatPrice(result.matchedPrice ?? 0)}\n` +
       `  Quantity: ${formatQty(quantity)}\n` +
-      `  Matched: ${formatQty(result.matchedQuantity)}\n` +
+      `  Matched: ${formatQty(result.matchedQuantity ?? 0)}\n` +
       `  Tx IDs: ${result.txIds.join(', ')}\n` +
       `  Confirmed round: ${result.confirmedRound}`,
     );
