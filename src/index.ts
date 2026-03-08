@@ -1,110 +1,15 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { AlphaClient } from '@alpha-arcade/sdk';
-import algosdk from 'algosdk';
 import { z } from 'zod';
+import { formatPrice, formatPriceFromProb, formatQty } from './shared/format.js';
+import {
+  getReadOnlyClient,
+  getRuntimeConfig,
+  requireTradingClient,
+  resolveWalletAddress,
+} from './shared/runtime.js';
 
-// ============================================
-// Configuration from environment variables
-// ============================================
-
-const MNEMONIC = process.env.ALPHA_MNEMONIC;
-const API_KEY = process.env.ALPHA_API_KEY;
-const ALGOD_SERVER = process.env.ALPHA_ALGOD_SERVER || 'https://mainnet-api.algonode.cloud';
-const ALGOD_TOKEN = process.env.ALPHA_ALGOD_TOKEN || '';
-const ALGOD_PORT = process.env.ALPHA_ALGOD_PORT || '443';
-const INDEXER_SERVER = process.env.ALPHA_INDEXER_SERVER || 'https://mainnet-idx.algonode.cloud';
-const INDEXER_TOKEN = process.env.ALPHA_INDEXER_TOKEN || '';
-const INDEXER_PORT = process.env.ALPHA_INDEXER_PORT || '443';
-const MATCHER_APP_ID = Number(process.env.ALPHA_MATCHER_APP_ID || '3078581851');
-const USDC_ASSET_ID = Number(process.env.ALPHA_USDC_ASSET_ID || '31566704');
-const API_BASE_URL = process.env.ALPHA_API_BASE_URL || 'https://platform.alphaarcade.com/api';
-
-// ============================================
-// Build the Alpha client
-// ============================================
-
-/** Creates a full trading client (requires mnemonic) */
-const createTradingClient = (): AlphaClient | null => {
-  if (!MNEMONIC) return null;
-
-  const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_SERVER, ALGOD_PORT);
-  const indexerClient = new algosdk.Indexer(INDEXER_TOKEN, INDEXER_SERVER, INDEXER_PORT);
-  const account = algosdk.mnemonicToSecretKey(MNEMONIC);
-  const signer = algosdk.makeBasicAccountTransactionSigner(account);
-
-  return new AlphaClient({
-    algodClient,
-    indexerClient,
-    signer,
-    activeAddress: account.addr,
-    matcherAppId: MATCHER_APP_ID,
-    usdcAssetId: USDC_ASSET_ID,
-    apiBaseUrl: API_BASE_URL,
-    apiKey: API_KEY || undefined,
-  });
-};
-
-/** Creates a read-only client (no mnemonic needed, works with zero config) */
-const createReadOnlyClient = (): AlphaClient => {
-  const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_SERVER, ALGOD_PORT);
-  const indexerClient = new algosdk.Indexer(INDEXER_TOKEN, INDEXER_SERVER, INDEXER_PORT);
-  const dummySigner: algosdk.TransactionSigner = async () => [];
-
-  return new AlphaClient({
-    algodClient,
-    indexerClient,
-    signer: dummySigner,
-    activeAddress: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ',
-    matcherAppId: MATCHER_APP_ID,
-    usdcAssetId: USDC_ASSET_ID,
-    apiBaseUrl: API_BASE_URL,
-    apiKey: API_KEY || undefined,
-  });
-};
-
-const requireTradingClient = (): AlphaClient => {
-  const client = createTradingClient();
-  if (!client) {
-    throw new Error(
-      'ALPHA_MNEMONIC environment variable is required for trading operations. ' +
-      'Set it in your MCP server configuration.'
-    );
-  }
-  return client;
-};
-
-const getReadOnlyClient = (): AlphaClient => {
-  return createTradingClient() ?? createReadOnlyClient();
-};
-
-/** Returns the configured wallet address, or null if no mnemonic is set */
-const getConfiguredWalletAddress = (): string | null => {
-  if (!MNEMONIC) return null;
-  try {
-    const account = algosdk.mnemonicToSecretKey(MNEMONIC);
-    return account.addr;
-  } catch {
-    return null;
-  }
-};
-
-/** Resolves the wallet address for position/order lookups. Throws a clear error if missing. */
-const resolveWalletAddress = (walletAddress?: string): string => {
-  if (walletAddress) return walletAddress;
-  const configured = getConfiguredWalletAddress();
-  if (configured) return configured;
-  throw new Error(
-    'No wallet address provided. Either pass a walletAddress parameter, or set ALPHA_MNEMONIC in your MCP server configuration so the default wallet is used.'
-  );
-};
-
-// ============================================
-// Helpers
-// ============================================
-
-const formatPrice = (microunits: number): string => `$${(microunits / 1_000_000).toFixed(2)}`;
-const formatQty = (microunits: number): string => `${(microunits / 1_000_000).toFixed(2)} shares`;
+const runtimeConfig = getRuntimeConfig();
 
 const textResult = (text: string) => ({
   content: [{ type: 'text' as const, text }],
@@ -184,6 +89,11 @@ Sell orders lock outcome tokens as collateral.
 1. \`get_positions\` — see all YES/NO token balances with market titles and asset IDs
 2. For open orders on a specific market: \`get_open_orders\` with the \`marketAppId\`
 
+### Editing an order (amend)
+1. \`get_open_orders\` — find the \`escrowAppId\`
+2. \`amend_order\` with \`marketAppId\`, \`escrowAppId\`, new \`price\`, and new \`quantity\`
+3. Faster and cheaper than cancel + recreate. Only works on unfilled orders.
+
 ### Cancelling an order
 1. \`get_open_orders\` — find the \`escrowAppId\` and \`owner\` address
 2. \`cancel_order\` with \`marketAppId\`, \`escrowAppId\`, and \`orderOwner\`
@@ -235,7 +145,7 @@ server.registerTool(
   'get_live_markets',
   { description: 'Fetch all live markets. Returns summary: id, title, marketAppId, prices, volume. Multi-choice markets have an options[] array — use options[].marketAppId for trading, not the parent. Prices (yesPrice/noPrice) are formatted as dollars. Read the agent-guide resource for full data model details.' },
   async () => {
-    const client = getReadOnlyClient();
+    const client = getReadOnlyClient(runtimeConfig);
     const markets = await client.getLiveMarkets();
     const summary = markets.map((m) => {
       const entry: Record<string, unknown> = {
@@ -250,8 +160,8 @@ server.registerTool(
       };
       // API returns yesProb as a percentage (e.g. 40 = 40% = $0.40), volume as dollars.
       // On-chain markets don't have these fields.
-      if (m.yesProb != null) entry.yesPrice = `$${(m.yesProb / 100).toFixed(2)}`;
-      if (m.noProb != null) entry.noPrice = `$${(m.noProb / 100).toFixed(2)}`;
+      if (m.yesProb != null) entry.yesPrice = formatPriceFromProb(m.yesProb);
+      if (m.noProb != null) entry.noPrice = formatPriceFromProb(m.noProb);
       if (m.volume != null) entry.volume = `$${m.volume.toFixed(2)}`;
       if (m.categories?.length) entry.categories = m.categories;
       if (m.feeBase != null) entry.feeBase = m.feeBase;
@@ -274,7 +184,7 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    const client = getReadOnlyClient();
+    const client = getReadOnlyClient(runtimeConfig);
     const markets = await client.getRewardMarkets();
     const summary = markets.map((m) => {
       const entry: Record<string, unknown> = {
@@ -287,8 +197,8 @@ server.registerTool(
         isResolved: m.isResolved ?? false,
         source: m.source ?? 'unknown',
       };
-      if (m.yesProb != null) entry.yesPrice = `$${(m.yesProb / 100).toFixed(2)}`;
-      if (m.noProb != null) entry.noPrice = `$${(m.noProb / 100).toFixed(2)}`;
+      if (m.yesProb != null) entry.yesPrice = formatPriceFromProb(m.yesProb);
+      if (m.noProb != null) entry.noPrice = formatPriceFromProb(m.noProb);
       if (m.volume != null) entry.volume = `$${m.volume.toFixed(2)}`;
       if (m.categories?.length) entry.categories = m.categories;
       if (m.feeBase != null) entry.feeBase = m.feeBase;
@@ -317,7 +227,7 @@ server.registerTool(
     inputSchema: { marketId: z.string().describe('The market ID (app ID string for on-chain, UUID for API)') },
   },
   async ({ marketId }: { marketId: string }) => {
-    const client = getReadOnlyClient();
+    const client = getReadOnlyClient(runtimeConfig);
     const market = await client.getMarket(marketId);
     if (!market) return textResult(`Market "${marketId}" not found.`);
     return textResult(JSON.stringify(market, null, 2));
@@ -331,7 +241,7 @@ server.registerTool(
     inputSchema: { marketAppId: z.number().describe('The market app ID (number)') },
   },
   async ({ marketAppId }: { marketAppId: number }) => {
-    const client = getReadOnlyClient();
+    const client = getReadOnlyClient(runtimeConfig);
     const book = await client.getOrderbook(marketAppId);
 
     type RawEntry = { price: number; quantity: number; escrowAppId: number; owner: string };
@@ -388,8 +298,8 @@ server.registerTool(
     },
   },
   async ({ marketAppId, walletAddress }: { marketAppId: number; walletAddress?: string }) => {
-    const address = resolveWalletAddress(walletAddress);
-    const client = getReadOnlyClient();
+    const address = resolveWalletAddress(runtimeConfig, walletAddress);
+    const client = getReadOnlyClient(runtimeConfig);
     const orders = await client.getOpenOrders(marketAppId, address);
     const formatted = orders.map((o) => ({
       escrowAppId: o.escrowAppId,
@@ -417,8 +327,8 @@ server.registerTool(
     },
   },
   async ({ walletAddress }: { walletAddress?: string }) => {
-    const address = resolveWalletAddress(walletAddress);
-    const client = getReadOnlyClient();
+    const address = resolveWalletAddress(runtimeConfig, walletAddress);
+    const client = getReadOnlyClient(runtimeConfig);
     const positions = await client.getPositions(address);
     const formatted = positions.map((p) => ({
       marketAppId: p.marketAppId,
@@ -453,7 +363,7 @@ server.registerTool(
     },
   },
   async ({ marketAppId, position, price, quantity, isBuying }: { marketAppId: number; position: 0 | 1; price: number; quantity: number; isBuying: boolean }) => {
-    const client = requireTradingClient();
+    const client = requireTradingClient(runtimeConfig);
     const result = await client.createLimitOrder({
       marketAppId,
       position: position as 0 | 1,
@@ -489,7 +399,7 @@ server.registerTool(
     },
   },
   async ({ marketAppId, position, price, quantity, isBuying, slippage }: { marketAppId: number; position: 0 | 1; price: number; quantity: number; isBuying: boolean; slippage: number }) => {
-    const client = requireTradingClient();
+    const client = requireTradingClient(runtimeConfig);
     const result = await client.createMarketOrder({
       marketAppId,
       position: position as 0 | 1,
@@ -525,12 +435,35 @@ server.registerTool(
     },
   },
   async ({ marketAppId, escrowAppId, orderOwner }: { marketAppId: number; escrowAppId: number; orderOwner: string }) => {
-    const client = requireTradingClient();
+    const client = requireTradingClient(runtimeConfig);
     const result = await client.cancelOrder({ marketAppId, escrowAppId, orderOwner });
     return textResult(
       result.success
         ? `Order cancelled successfully.\n  Market App ID: ${marketAppId}\n  Escrow App ID: ${escrowAppId}\n  Tx IDs: ${result.txIds.join(', ')}\n  Confirmed round: ${result.confirmedRound}`
         : `Failed to cancel order ${escrowAppId}.`,
+    );
+  },
+);
+
+server.registerTool(
+  'amend_order',
+  {
+    description: 'Edit an existing unfilled order in-place (change price, quantity, or slippage). Faster and cheaper than cancel + recreate. Only works on orders with zero quantity filled. Collateral is adjusted automatically — extra funds are sent if value increases, refunded if it decreases.',
+    inputSchema: {
+      marketAppId: z.number().describe('The market app ID'),
+      escrowAppId: z.number().describe('The escrow app ID of the order to amend'),
+      price: z.number().describe('New price in microunits (e.g. 500000 = $0.50)'),
+      quantity: z.number().describe('New quantity in microunits (e.g. 1000000 = 1 share)'),
+      slippage: z.number().optional().describe('New slippage in microunits (default 0)'),
+    },
+  },
+  async ({ marketAppId, escrowAppId, price, quantity, slippage }: { marketAppId: number; escrowAppId: number; price: number; quantity: number; slippage?: number }) => {
+    const client = requireTradingClient(runtimeConfig);
+    const result = await client.amendOrder({ marketAppId, escrowAppId, price, quantity, slippage });
+    return textResult(
+      result.success
+        ? `Order amended successfully.\n  Market App ID: ${marketAppId}\n  Escrow App ID: ${escrowAppId}\n  New Price: ${formatPrice(price)}\n  New Quantity: ${formatQty(quantity)}\n  Tx IDs: ${result.txIds.join(', ')}\n  Confirmed round: ${result.confirmedRound}`
+        : `Failed to amend order ${escrowAppId}.`,
     );
   },
 );
@@ -547,7 +480,7 @@ server.registerTool(
     },
   },
   async ({ marketAppId, makerEscrowAppId, makerAddress, quantityMatched }: { marketAppId: number; makerEscrowAppId: number; makerAddress: string; quantityMatched: number }) => {
-    const client = requireTradingClient();
+    const client = requireTradingClient(runtimeConfig);
     const result = await client.proposeMatch({
       marketAppId,
       makerEscrowAppId,
@@ -572,7 +505,7 @@ server.registerTool(
     },
   },
   async ({ marketAppId, amount }: { marketAppId: number; amount: number }) => {
-    const client = requireTradingClient();
+    const client = requireTradingClient(runtimeConfig);
     const result = await client.splitShares({ marketAppId, amount });
     return textResult(
       `Split ${formatPrice(amount)} USDC into YES + NO tokens.\n` +
@@ -594,7 +527,7 @@ server.registerTool(
     },
   },
   async ({ marketAppId, amount }: { marketAppId: number; amount: number }) => {
-    const client = requireTradingClient();
+    const client = requireTradingClient(runtimeConfig);
     const result = await client.mergeShares({ marketAppId, amount });
     return textResult(
       `Merged YES + NO tokens back into ${formatPrice(amount)} USDC.\n` +
@@ -617,7 +550,7 @@ server.registerTool(
     },
   },
   async ({ marketAppId, assetId, amount }: { marketAppId: number; assetId: number; amount?: number }) => {
-    const client = requireTradingClient();
+    const client = requireTradingClient(runtimeConfig);
     const result = await client.claim({ marketAppId, assetId, amount });
     return textResult(
       `Claim successful.\n` +

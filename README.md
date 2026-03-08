@@ -4,6 +4,50 @@ MCP (Model Context Protocol) server for [Alpha Arcade](https://alphaarcade.com) 
 
 Lets AI agents (Claude, Cursor, Copilot, etc.) browse markets, place orders, manage positions, and trade on-chain prediction markets.
 
+## SDK vs MCP vs CLI
+
+- **SDK (`@alpha-arcade/sdk`)**: low-level TypeScript primitives for bots, backends, and apps.
+- **MCP (`@alpha-arcade/mcp`)**: exposes the same capabilities as MCP tools for AI agents.
+- **CLI (`@alpha-arcade/cli`)**: human terminal UX with `table/json` output, prompts, and `--dry-run`/`--yes` safety rails.
+
+The CLI and MCP both use the same runtime/client setup logic so behavior stays aligned.
+
+## Alpha CLI (terminal)
+
+The CLI package lives in `alpha-cli/` in this repo and can be published independently as `@alpha-arcade/cli`.
+
+### Quickstart
+
+```bash
+cd alpha-cli
+npm install
+npm run build
+node dist/index.js markets list --limit 5
+```
+
+### Common commands
+
+```bash
+# Read-only
+node dist/index.js markets list --limit 5
+node dist/index.js markets get <marketId>
+node dist/index.js orderbook <marketAppId>
+node dist/index.js positions --wallet-address <addr>
+
+# Trading (requires ALPHA_MNEMONIC)
+node dist/index.js trade limit --market <id> --position yes --side buy --price 0.52 --quantity 10
+node dist/index.js trade market --market <id> --position no --side buy --price 0.45 --quantity 20 --slippage 0.05
+node dist/index.js orders amend --market <id> --escrow-app-id <escrow> --price 0.60 --quantity 3
+node dist/index.js orders cancel --market <id> --escrow-app-id <escrow> --order-owner <addr>
+```
+
+### CLI safety model
+
+- Write commands prompt for confirmation by default.
+- `--dry-run` prints payloads (and market-order matching estimate) without submitting.
+- `--yes` bypasses prompts for non-interactive automation.
+- Price validation enforces `(0,1)` dollars and caps unusually high slippage.
+
 ## Tools
 
 | Tool | Description | Requires Wallet |
@@ -16,6 +60,7 @@ Lets AI agents (Claude, Cursor, Copilot, etc.) browse markets, place orders, man
 | `create_limit_order` | Place a limit order on a market | Yes |
 | `create_market_order` | Place a market order with auto-matching | Yes |
 | `cancel_order` | Cancel an open order | Yes |
+| `amend_order` | Edit an existing unfilled order (price, quantity, slippage) | Yes |
 | `propose_match` | Match two existing orders | Yes |
 | `split_shares` | Split USDC into YES + NO tokens | Yes |
 | `merge_shares` | Merge YES + NO tokens back into USDC | Yes |
