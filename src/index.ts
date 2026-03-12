@@ -138,6 +138,18 @@ server.registerResource(
 );
 
 // ------------------------------------------
+// Agent Guide tool
+// ------------------------------------------
+
+server.registerTool(
+  'get_agent_guide',
+  {
+    description: 'Returns the Alpha Arcade agent guide — data model, units, orderbook mechanics, workflows, and common pitfalls. Read this before interacting with prediction markets.',
+  },
+  async () => textResult(AGENT_GUIDE),
+);
+
+// ------------------------------------------
 // Read-only tools
 // ------------------------------------------
 

@@ -52,6 +52,7 @@ node dist/index.js orders cancel --market <id> --escrow-app-id <escrow> --order-
 
 | Tool | Description | Requires Wallet |
 |------|-------------|:---:|
+| `get_agent_guide` | Returns the agent guide — data model, units, mechanics, workflows, pitfalls | No |
 | `get_live_markets` | Fetch all live tradeable markets | No |
 | `get_market` | Fetch a single market by ID | No |
 | `get_orderbook` | Get the full on-chain orderbook for a market | No |
@@ -65,6 +66,12 @@ node dist/index.js orders cancel --market <id> --escrow-app-id <escrow> --order-
 | `split_shares` | Split USDC into YES + NO tokens | Yes |
 | `merge_shares` | Merge YES + NO tokens back into USDC | Yes |
 | `claim` | Redeem outcome tokens from a resolved market | Yes |
+
+## Resources
+
+| Resource | URI | Description |
+|----------|-----|-------------|
+| `agent-guide` | `alpha-arcade://agent-guide` | Agent guide for Alpha Arcade prediction markets — data model, units, mechanics, workflows, and common pitfalls |
 
 ## Setup
 
@@ -187,3 +194,4 @@ All prices and quantities use **microunits** (1,000,000 = $1.00 or 1 share):
 - SDK: [npmjs.com/package/@alpha-arcade/sdk](https://www.npmjs.com/package/@alpha-arcade/sdk)
 - GitHub: [github.com/phara23/alpha-mcp](https://github.com/phara23/alpha-mcp)
 - Alpha Arcade: [alphaarcade.com](https://alphaarcade.com)
+- Alpha Arcade API: [platform.alphaarcade.com](https://platform.alphaarcade.com)
