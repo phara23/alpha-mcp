@@ -1,6 +1,6 @@
 {
   "name": "@alpha-arcade/mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "MCP server for Alpha Arcade prediction markets on Algorand",
   "type": "module",
   "bin": {
@@ -32,7 +32,7 @@
   "license": "MIT",
   "dependencies": {
     "@algorandfoundation/algokit-utils": "^9.2.0",
-    "@alpha-arcade/sdk": "^0.4.0",
+    "@alpha-arcade/sdk": "^0.4.1",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "algosdk": "^3.5.2",
     "ws": "^8.19.0",
