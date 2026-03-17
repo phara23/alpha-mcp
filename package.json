@@ -32,7 +32,7 @@
   "license": "MIT",
   "dependencies": {
     "@algorandfoundation/algokit-utils": "^9.2.0",
-    "@alpha-arcade/sdk": "^0.3.0",
+    "@alpha-arcade/sdk": "^0.4.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "algosdk": "^3.5.2",
     "ws": "^8.19.0",
