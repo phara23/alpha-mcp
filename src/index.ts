@@ -1,6 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import WebSocket from 'ws';
+import { AlphaWebSocket } from '@alpha-arcade/sdk';
+import type { MarketsChangedEvent, MarketChangedEvent, OrderbookChangedEvent, WalletOrdersChangedEvent } from '@alpha-arcade/sdk';
 import { formatPrice, formatPriceFromProb, formatQty } from './shared/format.js';
 import {
   getReadOnlyClient,
@@ -572,6 +575,159 @@ server.registerTool(
       `  Tx IDs: ${result.txIds.join(', ')}\n` +
       `  Confirmed round: ${result.confirmedRound}`,
     );
+  },
+);
+
+// ------------------------------------------
+// WebSocket stream tools (real-time data)
+// ------------------------------------------
+
+server.registerTool(
+  'stream_orderbook',
+  {
+    description: 'Get a real-time orderbook snapshot for a market via WebSocket. Faster than on-chain reads (~5s vs ~10s). Returns the full orderbook with bids, asks, spread, and per-side YES/NO detail. Requires the market slug (URL-friendly name), not the market app ID.',
+    inputSchema: {
+      slug: z.string().describe('The market slug (URL-friendly name, e.g. "will-btc-hit-100k")'),
+      timeoutMs: z.number().optional().describe('Max time to wait for a snapshot in ms (default: 15000)'),
+    },
+  },
+  async ({ slug, timeoutMs }: { slug: string; timeoutMs?: number }) => {
+    const timeout = timeoutMs ?? 15_000;
+    const ws = new AlphaWebSocket({ WebSocket: WebSocket as unknown });
+
+    try {
+      const event = await new Promise<OrderbookChangedEvent>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          ws.close();
+          reject(new Error(`No orderbook snapshot received within ${timeout}ms for slug "${slug}"`));
+        }, timeout);
+
+        ws.subscribeOrderbook(slug, (data) => {
+          clearTimeout(timer);
+          resolve(data);
+        });
+      });
+
+      return textResult(JSON.stringify({
+        marketId: event.marketId,
+        ts: new Date(event.ts).toISOString(),
+        orderbook: event.orderbook,
+      }, null, 2));
+    } finally {
+      ws.close();
+    }
+  },
+);
+
+server.registerTool(
+  'stream_live_markets',
+  {
+    description: 'Collect real-time market probability changes via WebSocket for a specified duration. Returns all accumulated changes (market ID, probability patches, spread/midpoint updates). Useful for seeing which markets are active right now.',
+    inputSchema: {
+      durationMs: z.number().optional().describe('How long to collect events in ms (default: 5000)'),
+    },
+  },
+  async ({ durationMs }: { durationMs?: number }) => {
+    const duration = durationMs ?? 5_000;
+    const ws = new AlphaWebSocket({ WebSocket: WebSocket as unknown });
+    const events: MarketsChangedEvent[] = [];
+
+    try {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => resolve(), duration);
+
+        ws.subscribeLiveMarkets((data) => {
+          events.push(data);
+        });
+
+        // If connection fails, resolve with whatever we have
+        setTimeout(() => {
+          if (events.length === 0) {
+            clearTimeout(timer);
+            resolve();
+          }
+        }, duration + 1000);
+      });
+
+      const allChanges = events.flatMap((e) =>
+        ((e as any).changes || []).map((c: any) => ({ ...c, ts: new Date(e.ts).toISOString() })),
+      );
+
+      return textResult(
+        allChanges.length > 0
+          ? JSON.stringify({ eventsCollected: events.length, changes: allChanges }, null, 2)
+          : `No market changes received within ${duration}ms.`,
+      );
+    } finally {
+      ws.close();
+    }
+  },
+);
+
+server.registerTool(
+  'stream_market',
+  {
+    description: 'Watch a single market by slug via WebSocket and return the first change event. Times out if no change occurs. Requires the market slug, not the market app ID.',
+    inputSchema: {
+      slug: z.string().describe('The market slug (URL-friendly name)'),
+      timeoutMs: z.number().optional().describe('Max time to wait in ms (default: 15000)'),
+    },
+  },
+  async ({ slug, timeoutMs }: { slug: string; timeoutMs?: number }) => {
+    const timeout = timeoutMs ?? 15_000;
+    const ws = new AlphaWebSocket({ WebSocket: WebSocket as unknown });
+
+    try {
+      const event = await new Promise<MarketChangedEvent>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          ws.close();
+          reject(new Error(`No market change received within ${timeout}ms for slug "${slug}"`));
+        }, timeout);
+
+        ws.subscribeMarket(slug, (data) => {
+          clearTimeout(timer);
+          resolve(data);
+        });
+      });
+
+      return textResult(JSON.stringify(event, null, 2));
+    } finally {
+      ws.close();
+    }
+  },
+);
+
+server.registerTool(
+  'stream_wallet_orders',
+  {
+    description: 'Watch a wallet for order changes via WebSocket and return the first change event. Times out if no orders change. You must provide walletAddress or set ALPHA_MNEMONIC.',
+    inputSchema: {
+      walletAddress: z.string().optional().describe('Algorand wallet address (required if ALPHA_MNEMONIC is not set)'),
+      timeoutMs: z.number().optional().describe('Max time to wait in ms (default: 15000)'),
+    },
+  },
+  async ({ walletAddress, timeoutMs }: { walletAddress?: string; timeoutMs?: number }) => {
+    const address = resolveWalletAddress(runtimeConfig, walletAddress);
+    const timeout = timeoutMs ?? 15_000;
+    const ws = new AlphaWebSocket({ WebSocket: WebSocket as unknown });
+
+    try {
+      const event = await new Promise<WalletOrdersChangedEvent>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          ws.close();
+          reject(new Error(`No wallet order changes received within ${timeout}ms for wallet "${address}"`));
+        }, timeout);
+
+        ws.subscribeWalletOrders(address, (data) => {
+          clearTimeout(timer);
+          resolve(data);
+        });
+      });
+
+      return textResult(JSON.stringify(event, null, 2));
+    } finally {
+      ws.close();
+    }
   },
 );
 

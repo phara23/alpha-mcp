@@ -66,12 +66,47 @@ node dist/index.js orders cancel --market <id> --escrow-app-id <escrow> --order-
 | `split_shares` | Split USDC into YES + NO tokens | Yes |
 | `merge_shares` | Merge YES + NO tokens back into USDC | Yes |
 | `claim` | Redeem outcome tokens from a resolved market | Yes |
+| `stream_orderbook` | Get a real-time orderbook snapshot via WebSocket (faster than on-chain) | No |
+| `stream_live_markets` | Collect live market probability changes for a duration | No |
+| `stream_market` | Watch a single market for the first change event | No |
+| `stream_wallet_orders` | Watch a wallet for order changes | No |
 
 ## Resources
 
 | Resource | URI | Description |
 |----------|-----|-------------|
 | `agent-guide` | `alpha-arcade://agent-guide` | Agent guide for Alpha Arcade prediction markets — data model, units, mechanics, workflows, and common pitfalls |
+
+## WebSocket Stream Tools
+
+The `stream_*` tools connect to the Alpha Arcade WebSocket API (`wss://wss.platform.alphaarcade.com`) for real-time data. No API key required. Each tool opens a connection, collects data, then closes — no persistent subscriptions to manage.
+
+### `stream_orderbook`
+
+Gets a real-time orderbook snapshot for a market. Faster than the on-chain `get_orderbook` tool (~5s vs ~10s). Returns the full orderbook with bids, asks, spread, and per-side YES/NO detail.
+
+- **slug** (required): The market's URL-friendly name (e.g. `"will-btc-hit-100k"`)
+- **timeoutMs** (optional): Max wait time in ms (default: 15000)
+
+### `stream_live_markets`
+
+Collects market probability changes over a time window. Returns all accumulated changes with market IDs, probability patches, and spread/midpoint updates. Useful for seeing which markets are currently active.
+
+- **durationMs** (optional): How long to collect events in ms (default: 5000)
+
+### `stream_market`
+
+Watches a single market by slug and returns the first change event. Times out if nothing changes.
+
+- **slug** (required): The market's URL-friendly name
+- **timeoutMs** (optional): Max wait time in ms (default: 15000)
+
+### `stream_wallet_orders`
+
+Watches a wallet for order changes (new, updated, or filled orders) and returns the first event. Uses the configured `ALPHA_MNEMONIC` wallet if no address is provided.
+
+- **walletAddress** (optional): Algorand wallet address
+- **timeoutMs** (optional): Max wait time in ms (default: 15000)
 
 ## Setup
 
