@@ -35,7 +35,7 @@ All prices and quantities in tool **inputs** use **microunits**: 1,000,000 = $1.
 | 1 share | 1,000,000 |
 | 30 shares | 30,000,000 |
 
-Tool **outputs** from read tools (get_orderbook, get_open_orders, get_positions) return pre-formatted strings like "$0.50" and "2.50 shares". Write tools accept raw microunit integers.
+Tool **outputs** from read tools (get_orderbook, get_full_orderbook, get_open_orders, get_positions) return either pre-formatted summaries or raw JSON snapshots depending on the tool. Write tools accept raw microunit integers.
 
 ## Market Data Model
 
@@ -84,7 +84,7 @@ Sell orders lock outcome tokens as collateral.
 
 ### Buying shares
 1. \`get_live_markets\` — find a market (or \`get_reward_markets\` for markets with liquidity rewards)
-2. \`get_orderbook\` — check available liquidity
+2. \`get_orderbook\` or \`get_full_orderbook\` — check available liquidity
 3. \`create_market_order\` (auto-matches) or \`create_limit_order\` (rests on book)
 4. Save the returned \`escrowAppId\` — you need it to cancel
 
@@ -300,6 +300,23 @@ server.registerTool(
       totalOrders,
     };
     return textResult(JSON.stringify(result, null, 2));
+  },
+);
+
+server.registerTool(
+  'get_full_orderbook',
+  {
+    description: 'Fetch the full processed orderbook snapshot from the Alpha REST API for a market. Requires ALPHA_API_KEY. Input is the Alpha market ID (UUID), not marketAppId. Returns the same app-keyed snapshot shape as websocket orderbook_changed.orderbook.',
+    inputSchema: { marketId: z.string().describe('The Alpha market ID (UUID)') },
+  },
+  async ({ marketId }: { marketId: string }) => {
+    const client = getReadOnlyClient(runtimeConfig);
+    const snapshot = await client.getFullOrderbookFromApi(marketId);
+
+    return textResult(JSON.stringify({
+      marketId,
+      orderbook: snapshot,
+    }, null, 2));
   },
 );
 
@@ -585,7 +602,7 @@ server.registerTool(
 server.registerTool(
   'stream_orderbook',
   {
-    description: 'Get a real-time orderbook snapshot for a market via WebSocket. Faster than on-chain reads (~5s vs ~10s). Returns the full orderbook with bids, asks, spread, and per-side YES/NO detail. Requires the market slug (URL-friendly name), not the market app ID.',
+    description: 'Get a real-time orderbook snapshot for a market via WebSocket. Faster than on-chain reads (~5s vs ~10s). Returns the same full processed snapshot shape as get_full_orderbook, with bids, asks, spread, and per-side YES/NO detail. Requires the market slug (URL-friendly name), not the market app ID.',
     inputSchema: {
       slug: z.string().describe('The market slug (URL-friendly name, e.g. "will-btc-hit-100k")'),
       timeoutMs: z.number().optional().describe('Max time to wait for a snapshot in ms (default: 15000)'),

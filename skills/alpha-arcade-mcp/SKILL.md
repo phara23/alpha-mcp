@@ -5,7 +5,7 @@ description: Trade on Alpha Arcade prediction markets on Algorand — browse mar
 
 # Alpha Arcade — Prediction Markets on Algorand
 
-Interact with Alpha Arcade prediction markets via the Alpha Arcade MCP server (15 tools across read-only and trading categories).
+Interact with Alpha Arcade prediction markets via the Alpha Arcade MCP server (16 tools across read-only, trading, and streaming categories).
 
 ## Key Characteristics
 
@@ -13,7 +13,7 @@ Interact with Alpha Arcade prediction markets via the Alpha Arcade MCP server (1
 - **Binary and multi-choice markets** — bet on YES/NO outcomes or choose from multiple options
 - **USDC-denominated** — all collateral and payouts in USDC (ASA 31566704)
 - **Microunit inputs** — all prices and quantities in tool inputs use microunits (1,000,000 = $1.00 or 1 share)
-- **Formatted outputs** — read tools return human-readable strings like "$0.50" and "2.50 shares"
+- **Formatted outputs** — read tools return human-readable strings or API snapshot JSON depending on the tool
 
 ## Setup
 
@@ -22,7 +22,7 @@ The Alpha Arcade MCP server requires environment variables:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ALPHA_MNEMONIC` | For trading | Algorand wallet mnemonic (25 words) |
-| `ALPHA_API_KEY` | For reward markets | Alpha Arcade API key |
+| `ALPHA_API_KEY` | For reward markets and full API orderbooks | Alpha Arcade API key |
 | `ALPHA_ALGOD_SERVER` | No | Algod endpoint (default: mainnet Algonode) |
 | `ALPHA_INDEXER_SERVER` | No | Indexer endpoint (default: mainnet Algonode) |
 | `ALPHA_MATCHER_APP_ID` | No | Matcher app ID (default: 3078581851) |
@@ -42,7 +42,7 @@ All prices and quantities in tool **inputs** use **microunits**: 1,000,000 = $1.
 | 1 share | 1,000,000 |
 | 30 shares | 30,000,000 |
 
-Tool **outputs** from read tools (`get_orderbook`, `get_open_orders`, `get_positions`) return pre-formatted strings. Write tools accept raw microunit integers.
+Tool **outputs** from read tools (`get_orderbook`, `get_full_orderbook`, `get_open_orders`, `get_positions`) return either pre-formatted summaries or raw JSON snapshots. Write tools accept raw microunit integers.
 
 ## Market Data Model
 
@@ -75,6 +75,7 @@ Because YES + NO always = $1.00:
 - A **NO bid at $0.71** is equivalent to a **YES ask at $0.29**
 
 The `get_orderbook` tool returns a unified YES-perspective view that merges all 4 sides automatically.
+The `get_full_orderbook` tool returns the full processed API snapshot keyed by `marketAppId`, matching websocket `orderbook_changed.orderbook`.
 
 ### Limit vs market orders
 - **Limit order** (`create_limit_order`): Sits on the orderbook at your exact price. No matching happens.
@@ -97,7 +98,8 @@ Every order locks ~0.957 ALGO as minimum balance requirement (MBR) for the on-ch
 | `get_live_markets` | Fetch all live markets with prices, volume, categories |
 | `get_reward_markets` | Fetch markets with liquidity rewards (requires `ALPHA_API_KEY`) |
 | `get_market` | Fetch full details for a single market by ID |
-| `get_orderbook` | Fetch unified YES-perspective orderbook for a market |
+| `get_orderbook` | Fetch unified YES-perspective on-chain orderbook for a market app |
+| `get_full_orderbook` | Fetch full processed API orderbook snapshot for a market ID |
 | `get_open_orders` | Fetch all open orders for a wallet on a specific market |
 | `get_positions` | Fetch all YES/NO token positions for a wallet across all markets |
 
@@ -118,7 +120,7 @@ Every order locks ~0.957 ALGO as minimum balance requirement (MBR) for the on-ch
 
 ### Buying shares
 1. `get_live_markets` — find a market (or `get_reward_markets` for markets with liquidity rewards)
-2. `get_orderbook` — check available liquidity
+2. `get_orderbook` or `get_full_orderbook` — check available liquidity
 3. `create_market_order` (auto-matches) or `create_limit_order` (rests on book)
 4. Save the returned `escrowAppId` — you need it to cancel
 

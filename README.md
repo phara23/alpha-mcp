@@ -2,7 +2,7 @@
 
 MCP (Model Context Protocol) server for [Alpha Arcade](https://alphaarcade.com) prediction markets on Algorand.
 
-Lets AI agents (Claude, Cursor, Copilot, etc.) browse markets, place orders, manage positions, and trade on-chain prediction markets.
+Lets AI agents (Claude, Cursor, Copilot, etc.) browse markets, fetch full API-backed orderbooks, place orders, manage positions, and trade on-chain prediction markets.
 
 ## SDK vs MCP vs CLI
 
@@ -55,7 +55,8 @@ node dist/index.js orders cancel --market <id> --escrow-app-id <escrow> --order-
 | `get_agent_guide` | Returns the agent guide — data model, units, mechanics, workflows, pitfalls | No |
 | `get_live_markets` | Fetch all live tradeable markets | No |
 | `get_market` | Fetch a single market by ID | No |
-| `get_orderbook` | Get the full on-chain orderbook for a market | No |
+| `get_orderbook` | Get the unified on-chain orderbook for a market app | No |
+| `get_full_orderbook` | Get the full processed orderbook snapshot from the Alpha REST API for a market | No |
 | `get_open_orders` | Get open orders for a wallet on a market | No |
 | `get_positions` | Get YES/NO token positions for a wallet | No |
 | `create_limit_order` | Place a limit order on a market | Yes |
@@ -71,6 +72,16 @@ node dist/index.js orders cancel --market <id> --escrow-app-id <escrow> --order-
 | `stream_market` | Watch a single market for the first change event | No |
 | `stream_wallet_orders` | Watch a wallet for order changes | No |
 
+### `get_full_orderbook`
+
+Fetches the full processed orderbook snapshot from the Alpha REST API for a market ID. Requires `ALPHA_API_KEY`.
+
+- **marketId** (required): The Alpha market ID (UUID), not `marketAppId`
+
+Returns the same app-keyed snapshot shape as websocket `orderbook_changed.orderbook`:
+- top-level aggregated `bids`, `asks`, and `spread`
+- detailed `yes` and `no` bid/ask orders with `escrowAppId` and `owner`
+
 ## Resources
 
 | Resource | URI | Description |
@@ -83,7 +94,7 @@ The `stream_*` tools connect to the Alpha Arcade WebSocket API (`wss://wss.platf
 
 ### `stream_orderbook`
 
-Gets a real-time orderbook snapshot for a market. Faster than the on-chain `get_orderbook` tool (~5s vs ~10s). Returns the full orderbook with bids, asks, spread, and per-side YES/NO detail.
+Gets a real-time orderbook snapshot for a market. Faster than the on-chain `get_orderbook` tool (~5s vs ~10s). Returns the same full processed snapshot shape as `get_full_orderbook`, with bids, asks, spread, and per-side YES/NO detail.
 
 - **slug** (required): The market's URL-friendly name (e.g. `"will-btc-hit-100k"`)
 - **timeoutMs** (optional): Max wait time in ms (default: 15000)
@@ -115,7 +126,7 @@ Watches a wallet for order changes (new, updated, or filled orders) and returns 
 | Variable | Required | Description |
 |----------|:--------:|-------------|
 | `ALPHA_MNEMONIC` | For trading | 25-word Algorand mnemonic |
-| `ALPHA_API_KEY` | No | Alpha partners API key. If set, markets are fetched via API (richer data). If omitted, markets are discovered on-chain. |
+| `ALPHA_API_KEY` | No | Alpha partners API key. If set, markets can be fetched via API and `get_full_orderbook` becomes available. If omitted, markets are discovered on-chain. |
 | `ALPHA_ALGOD_SERVER` | No | Algod URL (default: mainnet Algonode) |
 | `ALPHA_INDEXER_SERVER` | No | Indexer URL (default: mainnet Algonode) |
 | `ALPHA_MATCHER_APP_ID` | No | Matcher app ID (default: 3078581851) |
@@ -123,7 +134,7 @@ Watches a wallet for order changes (new, updated, or filled orders) and returns 
 
 ### Getting an API key
 
-An API key is **optional**. Without it, you can still fetch markets on-chain, place orders, and use most SDK features. With an API key, you get richer market data, liquidity rewards information, and wallet order lookups, and more.
+An API key is **optional**. Without it, you can still fetch markets on-chain, place orders, and use most SDK features. With an API key, you get richer market data, full API-backed orderbooks, liquidity rewards information, wallet order lookups, and more.
 
 To get an API key:
 
