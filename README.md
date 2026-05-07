@@ -90,7 +90,7 @@ Returns the same app-keyed snapshot shape as websocket `orderbook_changed.orderb
 
 ## WebSocket Stream Tools
 
-The `stream_*` tools connect to the Alpha Arcade WebSocket API (`wss://wss.platform.alphaarcade.com`) for real-time data. No API key required. Each tool opens a connection, collects data, then closes — no persistent subscriptions to manage.
+The `stream_*` tools connect to the Alpha Arcade WebSocket API (`wss://platform-wss.alphaarcade.com`) for real-time data. No API key required. Each tool opens a connection, collects data, then closes — no persistent subscriptions to manage.
 
 ### `stream_orderbook`
 
