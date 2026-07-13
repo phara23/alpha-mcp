@@ -4,6 +4,7 @@ import { z } from 'zod';
 import WebSocket from 'ws';
 import { AlphaWebSocket } from '@alpha-arcade/sdk';
 import type { MarketsChangedEvent, MarketChangedEvent, OrderbookChangedEvent, WalletOrdersChangedEvent } from '@alpha-arcade/sdk';
+import algosdk from 'algosdk';
 import { formatPrice, formatPriceFromProb, formatQty } from './shared/format.js';
 import {
   getReadOnlyClient,
@@ -18,6 +19,43 @@ const textResult = (text: string) => ({
   content: [{ type: 'text' as const, text }],
 });
 
+const comboLegSchema = z.union([
+  z.object({
+    source: z.literal('aa'),
+    marketId: z.string(),
+    selection: z.enum(['yes', 'no']),
+    label: z.string().optional(),
+  }),
+  z.object({
+    source: z.literal('sgp'),
+    graderId: z.string(),
+    sgp: z.string(),
+    league: z.string().optional(),
+    eventId: z.string().optional(),
+    label: z.string().optional(),
+  }),
+]);
+
+const comboTreeSchema = z.object({
+  groups: z.array(z.object({
+    op: z.enum(['AND', 'OR']),
+    legs: z.array(comboLegSchema).min(1),
+  })).min(1),
+  connectors: z.array(z.enum(['AND', 'OR'])),
+});
+
+const signBase64Txns = async (unsignedTxnsB64: string[]): Promise<string[]> => {
+  if (!runtimeConfig.mnemonic) {
+    throw new Error('ALPHA_MNEMONIC is required to sign combo RFQ transactions.');
+  }
+  const account = algosdk.mnemonicToSecretKey(runtimeConfig.mnemonic);
+  const signer = algosdk.makeBasicAccountTransactionSigner(account);
+  const txns = unsignedTxnsB64.map((txnB64) =>
+    algosdk.decodeUnsignedTransaction(Buffer.from(txnB64, 'base64')),
+  );
+  const signed = await signer(txns, txns.map((_, index) => index));
+  return signed.map((bytes) => Buffer.from(bytes).toString('base64'));
+};
 const apiHeaders = () => {
   const headers: Record<string, string> = {};
   if (runtimeConfig.apiKey) headers['x-api-key'] = runtimeConfig.apiKey;
@@ -107,6 +145,9 @@ When looking for the best price to buy YES, check both YES asks AND NO bids (com
 ### Routed liquidity
 Some markets have executable Polymarket-backed liquidity that is not a resting Alpha Arcade escrow yet. Use \`get_routed_orderbook\` to see native AA liquidity and routed liquidity together. Routed entries are tagged with \`source: "polymarket"\` and \`execution: "crossVenue"\`; do not pass them to \`create_market_order\`, which only matches real escrow orders. Use \`request_rfq\` to get a fresh quote for routed liquidity.
 
+### Combo RFQ (arbitrary AND/OR combos)
+Use \`request_combo_rfq\` / \`place_combo_rfq\` for multi-leg AND/OR combo purchases. The platform runs a short competitive auction (Alpha house + partner makers). Quotes may be filled by an external maker; decline/timeout requires a fresh quote. Requires \`ALPHA_API_KEY\`. \`place_combo_rfq\` also requires \`ALPHA_MNEMONIC\`.
+
 ### Limit vs market orders
 - **Limit order** (\`create_limit_order\`): Sits on the orderbook at your exact price. No matching happens.
 - **Market order** (\`create_market_order\`): Auto-matches against existing orders within your slippage tolerance. Returns the actual fill price.
@@ -123,7 +164,7 @@ Sell orders lock outcome tokens as collateral.
 ### Buying shares
 1. \`get_live_markets\` - find a market (or \`get_reward_markets\` for markets with liquidity rewards)
 2. \`get_orderbook\`, \`get_full_orderbook\`, or \`get_routed_orderbook\` - check available liquidity
-3. \`create_market_order\` for AA escrow liquidity, \`request_rfq\` for routed liquidity, or \`create_limit_order\` to rest on book
+3. \`create_market_order\` for AA escrow liquidity, \`request_rfq\` for routed liquidity, \`place_combo_rfq\` for arbitrary AND/OR combos, or \`create_limit_order\` to rest on book
 4. Save the returned \`escrowAppId\` - you need it to cancel
 
 ### Checking your portfolio
@@ -149,6 +190,7 @@ Sell orders lock outcome tokens as collateral.
 - **Prices are microunits in inputs**: $0.50 = 500,000, not 0.5 or 50.
 - **Orderbook cross-side**: If you only check YES asks, you miss cheaper liquidity from NO bids.
 - **Routed liquidity**: Entries tagged \`execution: "crossVenue"\` are executable quotes, not existing escrows. They require RFQ/cross-venue submit, not AA-only matching.
+- **Combo RFQ**: \`place_combo_rfq\` buys YES on a synthetic combo pool. External maker fills can decline/timeout — re-quote; do not retry the same signed legs against another maker.
 - **Save escrowAppId**: It's the only way to cancel or reference your order later.
 - **Wallet required for trading**: Read-only tools work without \`ALPHA_MNEMONIC\`, but trading tools require it.
 `;
@@ -449,6 +491,155 @@ server.registerTool(
       : quoteResponse;
 
     return textResult(JSON.stringify(quote, null, 2));
+  },
+);
+
+server.registerTool(
+  'request_combo_rfq',
+  {
+    description: 'Request a competitive arbitrary-combo RFQ quote (AND/OR tree). Alpha house always participates; partner makers may undercut. Requires ALPHA_API_KEY. Returns quote metadata and, when userAddress is known, unsignedUserTxns for signing.',
+    inputSchema: {
+      tree: comboTreeSchema.describe('Combo tree: groups of AND/OR legs with connectors between groups'),
+      grossStakeMicro: z.number().describe('Exact-debit stake in micro USDC (1000000 = $1)'),
+      walletAddress: z.string().optional().describe('Taker wallet. Defaults to ALPHA_MNEMONIC wallet when set.'),
+      name: z.string().optional().describe('Optional display name for the combo'),
+    },
+  },
+  async ({
+    tree,
+    grossStakeMicro,
+    walletAddress,
+    name,
+  }: {
+    tree: z.infer<typeof comboTreeSchema>;
+    grossStakeMicro: number;
+    walletAddress?: string;
+    name?: string;
+  }) => {
+    if (!runtimeConfig.apiKey) {
+      throw new Error('ALPHA_API_KEY is required for combo RFQ quotes.');
+    }
+    const userAddress = (() => {
+      if (walletAddress) return resolveWalletAddress(runtimeConfig, walletAddress);
+      try {
+        return resolveWalletAddress(runtimeConfig);
+      } catch {
+        return undefined;
+      }
+    })();
+    const client = getReadOnlyClient(runtimeConfig) as unknown as {
+      requestComboRfqQuote?: (params: Record<string, unknown>) => Promise<unknown>;
+    };
+    const params = {
+      tree,
+      grossStakeMicro: Math.floor(grossStakeMicro),
+      ...(userAddress ? { userAddress } : {}),
+      ...(name ? { name } : {}),
+    };
+    const quote = typeof client.requestComboRfqQuote === 'function'
+      ? await client.requestComboRfqQuote(params)
+      : await postApiJson('/combo/quote', {
+        groups: tree.groups,
+        connectors: tree.connectors,
+        grossStakeMicro: Math.floor(grossStakeMicro),
+        ...(userAddress ? { userAddress } : {}),
+        ...(name ? { name } : {}),
+      });
+
+    return textResult(JSON.stringify(quote, null, 2));
+  },
+);
+
+server.registerTool(
+  'place_combo_rfq',
+  {
+    description: 'Request a competitive combo RFQ, sign the returned unsigned user legs with ALPHA_MNEMONIC, and submit. Requires ALPHA_API_KEY and ALPHA_MNEMONIC. If the selected external maker declines or times out, re-quote — do not reuse the same signed legs.',
+    inputSchema: {
+      tree: comboTreeSchema.describe('Combo tree: groups of AND/OR legs with connectors between groups'),
+      grossStakeMicro: z.number().describe('Exact-debit stake in micro USDC (1000000 = $1)'),
+      name: z.string().optional().describe('Optional display name for the combo'),
+    },
+  },
+  async ({
+    tree,
+    grossStakeMicro,
+    name,
+  }: {
+    tree: z.infer<typeof comboTreeSchema>;
+    grossStakeMicro: number;
+    name?: string;
+  }) => {
+    if (!runtimeConfig.apiKey) {
+      throw new Error('ALPHA_API_KEY is required for combo RFQ placement.');
+    }
+    requireTradingClient(runtimeConfig);
+    const userAddress = resolveWalletAddress(runtimeConfig);
+    const client = getReadOnlyClient(runtimeConfig) as unknown as {
+      requestComboRfqQuote?: (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      submitComboRfqWallet?: (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+    };
+
+    const quoteParams = {
+      tree,
+      grossStakeMicro: Math.floor(grossStakeMicro),
+      userAddress,
+      ...(name ? { name } : {}),
+    };
+    const quote = (typeof client.requestComboRfqQuote === 'function'
+      ? await client.requestComboRfqQuote(quoteParams)
+      : await postApiJson('/combo/quote', {
+        groups: tree.groups,
+        connectors: tree.connectors,
+        grossStakeMicro: Math.floor(grossStakeMicro),
+        userAddress,
+        ...(name ? { name } : {}),
+      })) as {
+      quoteId?: string;
+      unsignedUserTxns?: string[];
+      pricedYesMicro?: number;
+      quantityMicro?: number;
+      makerKind?: string;
+      makerAddress?: string;
+      rfqId?: string;
+    };
+
+    if (!quote.quoteId) {
+      throw new Error('Combo RFQ quote response was missing quoteId.');
+    }
+    if (!Array.isArray(quote.unsignedUserTxns) || quote.unsignedUserTxns.length === 0) {
+      throw new Error('Combo RFQ quote did not include unsignedUserTxns. Ensure the stage returns server-built user legs.');
+    }
+
+    const signedTakerTxns = await signBase64Txns(quote.unsignedUserTxns);
+    const submitParams = {
+      quoteId: quote.quoteId,
+      userAddress,
+      signedTakerTxns,
+    };
+    const result = (typeof client.submitComboRfqWallet === 'function'
+      ? await client.submitComboRfqWallet(submitParams)
+      : await postApiJson('/combo/submit', submitParams)) as {
+      ok?: boolean;
+      txId?: string;
+      marketId?: string;
+      pricedYesMicro?: number;
+      message?: string;
+      code?: string;
+    };
+
+    return textResult(JSON.stringify({
+      ok: result.ok ?? true,
+      txId: result.txId,
+      marketId: result.marketId,
+      pricedYesMicro: result.pricedYesMicro ?? quote.pricedYesMicro,
+      quantityMicro: quote.quantityMicro,
+      makerKind: quote.makerKind,
+      makerAddress: quote.makerAddress,
+      rfqId: quote.rfqId,
+      quoteId: quote.quoteId,
+      code: result.code,
+      message: result.message,
+    }, null, 2));
   },
 );
 
