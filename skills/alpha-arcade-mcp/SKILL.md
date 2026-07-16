@@ -100,6 +100,9 @@ Every order locks ~0.957 ALGO as minimum balance requirement (MBR) for the on-ch
 | `get_market` | Fetch full details for a single market by ID |
 | `get_orderbook` | Fetch unified YES-perspective on-chain orderbook for a market app |
 | `get_full_orderbook` | Fetch full processed API orderbook snapshot for a market ID |
+| `get_routed_orderbook` | Fetch native AA + routed Polymarket liquidity |
+| `request_rfq` | Request a routed-liquidity RFQ quote (requires API key) |
+| `request_combo_rfq` | Request a competitive arbitrary-combo RFQ quote (requires API key) |
 | `get_open_orders` | Fetch all open orders for a wallet on a specific market |
 | `get_positions` | Fetch all YES/NO token positions for a wallet across all markets |
 
@@ -109,6 +112,7 @@ Every order locks ~0.957 ALGO as minimum balance requirement (MBR) for the on-ch
 |------|---------|
 | `create_limit_order` | Place a limit order at a specific price |
 | `create_market_order` | Place a market order with auto-matching and slippage |
+| `place_combo_rfq` | Quote + sign + submit a competitive combo RFQ (also needs API key) |
 | `cancel_order` | Cancel an open order (refunds collateral) |
 | `amend_order` | Edit an existing unfilled order in-place |
 | `propose_match` | Propose a match between a maker order and your wallet |
@@ -121,8 +125,13 @@ Every order locks ~0.957 ALGO as minimum balance requirement (MBR) for the on-ch
 ### Buying shares
 1. `get_live_markets` — find a market (or `get_reward_markets` for markets with liquidity rewards)
 2. `get_orderbook` or `get_full_orderbook` — check available liquidity
-3. `create_market_order` (auto-matches) or `create_limit_order` (rests on book)
+3. `create_market_order` (auto-matches), `create_limit_order` (rests on book), or `place_combo_rfq` for AND/OR combos
 4. Save the returned `escrowAppId` — you need it to cancel
+
+### Placing an arbitrary combo (RFQ)
+1. Build a combo `tree` with AA and/or SGP legs
+2. `request_combo_rfq` to inspect price/maker, or `place_combo_rfq` to quote+sign+submit in one step
+3. If the selected maker declines or times out, request a fresh quote — do not reuse signed legs
 
 ### Checking your portfolio
 1. `get_positions` — see all YES/NO token balances with market titles and asset IDs
@@ -151,6 +160,8 @@ Every order locks ~0.957 ALGO as minimum balance requirement (MBR) for the on-ch
 - **Multi-choice markets**: The parent has no `marketAppId` for trading. Use `options[].marketAppId`.
 - **Prices are microunits in inputs**: $0.50 = 500,000, not 0.5 or 50.
 - **Orderbook cross-side**: If you only check YES asks, you miss cheaper liquidity from NO bids. The `get_orderbook` tool handles this automatically.
+- **Routed liquidity**: Use `request_rfq` for `execution: "crossVenue"` quotes, not `create_market_order`.
+- **Combo RFQ**: `place_combo_rfq` can be filled by Alpha or an external maker. Decline/timeout means re-quote.
 - **Save escrowAppId**: It's the only way to cancel or reference your order later.
 - **Wallet required for trading**: Read-only tools work without `ALPHA_MNEMONIC`, but trading tools require it.
 - **USDC opt-in**: The wallet must be opted into USDC (ASA 31566704) before trading.

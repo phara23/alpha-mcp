@@ -57,6 +57,10 @@ node dist/index.js orders cancel --market <id> --escrow-app-id <escrow> --order-
 | `get_market` | Fetch a single market by ID | No |
 | `get_orderbook` | Get the unified on-chain orderbook for a market app | No |
 | `get_full_orderbook` | Get the full processed orderbook snapshot from the Alpha REST API for a market | No |
+| `get_routed_orderbook` | Get native AA + routed Polymarket liquidity for a market | No |
+| `request_rfq` | Request a fresh routed-liquidity RFQ quote | No* |
+| `request_combo_rfq` | Request a competitive arbitrary-combo RFQ quote | No* |
+| `place_combo_rfq` | Quote, sign, and submit a competitive combo RFQ | Yes* |
 | `get_open_orders` | Get open orders for a wallet on a market | No |
 | `get_positions` | Get YES/NO token positions for a wallet | No |
 | `create_limit_order` | Place a limit order on a market | Yes |
@@ -81,6 +85,20 @@ Fetches the full processed orderbook snapshot from the Alpha REST API for a mark
 Returns the same app-keyed snapshot shape as websocket `orderbook_changed.orderbook`:
 - top-level aggregated `bids`, `asks`, and `spread`
 - detailed `yes` and `no` bid/ask orders with `escrowAppId` and `owner`
+
+### Combo RFQ
+
+Competitive quotes for arbitrary AND/OR combo purchases (`request_combo_rfq` / `place_combo_rfq`).
+
+- Requires `ALPHA_API_KEY`. `place_combo_rfq` also requires `ALPHA_MNEMONIC`.
+- `tree`: `{ groups: [{ op: "AND"|"OR", legs: [...] }], connectors: ["AND"|"OR", ...] }`
+- AA legs: `{ source: "aa", marketId, selection: "yes"|"no" }`
+- SGP legs: `{ source: "sgp", graderId, sgp, league?, eventId? }`
+- `grossStakeMicro`: exact-debit stake in micro USDC
+- Quote may include `unsignedUserTxns` when a wallet address is known
+- External maker decline/timeout requires a fresh quote (no rematch on the same signed legs)
+
+\* API-key tools marked `No*` still need `ALPHA_API_KEY`.
 
 ## Resources
 
